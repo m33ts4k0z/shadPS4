@@ -164,6 +164,11 @@ bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
         if (!HasPhysicalBacking(current_vma->second)) {
             break;
         }
+        // Orphaned Direct VMAs (phys released without munmap) have no backing to
+        // write to — let the caller fall back to a direct memcpy via the host VA.
+        if (current_vma->second.phys_areas.empty()) {
+            return false;
+        }
         vmas_to_write.emplace_back(current_vma->second);
         current_vma++;
     }
@@ -313,39 +318,58 @@ s32 MemoryManager::Free(PAddr phys_addr, u64 size, bool is_checked) {
         remaining_size -= size_in_dma;
     }
 
-    // Release any dmem mappings that reference this physical block.
-    std::vector<std::pair<VAddr, u64>> remove_list;
-    for (const auto& [addr, mapping] : vma_map) {
-        if (mapping.type != VMAType::Direct) {
-            continue;
-        }
-        for (auto& [offset_in_vma, phys_mapping] : mapping.phys_areas) {
-            if (phys_addr + size > phys_mapping.base &&
-                phys_addr < phys_mapping.base + phys_mapping.size) {
-                const u64 phys_offset =
-                    std::max<u64>(phys_mapping.base, phys_addr) - phys_mapping.base;
-                const VAddr addr_in_vma = mapping.base + offset_in_vma + phys_offset;
-                const u64 unmap_size = std::min<u64>(phys_mapping.size - phys_offset, size);
-
-                // Unmapping might erase from vma_map. We can't do it here.
-                remove_list.emplace_back(addr_in_vma, unmap_size);
-            }
-        }
-    }
-
-    // Early unmap from GPU to avoid deadlocking.
-    for (auto& [addr, unmap_size] : remove_list) {
-        if (IsValidGpuMapping(addr, unmap_size)) {
-            rasterizer->UnmapMemory(addr, unmap_size);
-        }
-    }
-
     // Acquire writer lock
     std::scoped_lock lk2{mutex};
 
-    for (const auto& [addr, size] : remove_list) {
-        LOG_INFO(Kernel_Vmm, "Unmapping direct mapping {:#x} with size {:#x}", addr, size);
-        UnmapMemoryImpl(addr, size);
+    // On PS4, sceKernelReleaseDirectMemory only releases the physical (dmem) memory;
+    // any virtual mappings that referenced the released phys remain accessible until
+    // the game separately calls sceKernelMunmap on them. Some titles (e.g. GT7) rely
+    // on writes to those orphaned VAs still landing on the (now-detached) backing
+    // pages — e.g. a libc memset that walks across a just-released range into the
+    // newly allocated range as if they were one contiguous buffer. So instead of
+    // eagerly unmapping the host VA here, leave the host mapping alive and just
+    // detach the released phys range from each Direct VMA's phys_areas. That way a
+    // later UnmapMemory on the orphaned VA won't try to steal the dmem back from
+    // the free pool, and concurrent CPU/GPU access to the orphan VA still works.
+    const PAddr release_end = phys_addr + size;
+    for (auto& [vma_addr, mapping] : vma_map) {
+        if (mapping.type != VMAType::Direct) {
+            continue;
+        }
+        std::map<uintptr_t, PhysicalMemoryArea> new_phys_areas;
+        for (auto& [offset_in_vma, phys_mapping] : mapping.phys_areas) {
+            const PAddr area_end = phys_mapping.base + phys_mapping.size;
+            const bool overlaps = release_end > phys_mapping.base && phys_addr < area_end;
+            if (!overlaps) {
+                new_phys_areas[offset_in_vma] = phys_mapping;
+                continue;
+            }
+            // Preserve any prefix that lies below the released range.
+            if (phys_mapping.base < phys_addr) {
+                PhysicalMemoryArea prefix = phys_mapping;
+                prefix.size = phys_addr - phys_mapping.base;
+                new_phys_areas[offset_in_vma] = prefix;
+            }
+            // Preserve any suffix that lies above the released range.
+            if (area_end > release_end) {
+                const u64 dropped_prefix = release_end - phys_mapping.base;
+                PhysicalMemoryArea suffix = phys_mapping;
+                suffix.base = release_end;
+                suffix.size = area_end - release_end;
+                new_phys_areas[offset_in_vma + dropped_prefix] = suffix;
+            }
+            // The intersecting portion is dropped (no longer tracks dmem).
+            LOG_INFO(Kernel_Vmm,
+                     "Orphaning direct VA {:#x}+{:#x} (phys {:#x}+{:#x}) on dmem release",
+                     mapping.base + offset_in_vma +
+                         (std::max<PAddr>(phys_mapping.base, phys_addr) - phys_mapping.base),
+                     std::min<u64>(area_end, release_end) -
+                         std::max<PAddr>(phys_mapping.base, phys_addr),
+                     std::max<PAddr>(phys_mapping.base, phys_addr),
+                     std::min<u64>(area_end, release_end) -
+                         std::max<PAddr>(phys_mapping.base, phys_addr));
+        }
+        mapping.phys_areas.swap(new_phys_areas);
     }
 
     // Unmap all dmem areas within this area.
@@ -874,15 +898,27 @@ u64 MemoryManager::UnmapBytesFromEntry(VAddr virtual_addr, VirtualMemoryArea vma
         return size_in_vma;
     }
 
-    VAddr current_addr = virtual_addr;
     if (vma_base.phys_areas.size() > 0) {
-        u64 size_to_free = size_in_vma;
-        auto phys_handle = std::prev(vma_base.phys_areas.upper_bound(start_in_vma));
-        while (phys_handle != vma_base.phys_areas.end() && size_to_free > 0) {
-            // Calculate physical memory offset, address, and size
-            u64 dma_offset = std::max<PAddr>(phys_handle->first, start_in_vma) - phys_handle->first;
-            PAddr phys_addr = phys_handle->second.base + dma_offset;
-            u64 size_in_dma = std::min<u64>(size_to_free, phys_handle->second.size - dma_offset);
+        const u64 end_in_vma = start_in_vma + size_in_vma;
+        // Find the first phys_areas entry that may overlap [start_in_vma, end_in_vma).
+        // phys_areas can legitimately contain gaps when Free() detached portions of a
+        // Direct VMA on sceKernelReleaseDirectMemory before this unmap arrives, so
+        // iterate by entry overlap rather than tracking a remaining-size counter.
+        auto phys_handle = vma_base.phys_areas.upper_bound(start_in_vma);
+        if (phys_handle != vma_base.phys_areas.begin()) {
+            auto prev_handle = std::prev(phys_handle);
+            if (prev_handle->first + prev_handle->second.size > start_in_vma) {
+                phys_handle = prev_handle;
+            }
+        }
+        while (phys_handle != vma_base.phys_areas.end() && phys_handle->first < end_in_vma) {
+            const auto entry_start = phys_handle->first;
+            const auto& region = phys_handle->second;
+            const auto overlap_start = std::max<u64>(entry_start, start_in_vma);
+            const auto overlap_end = std::min<u64>(entry_start + region.size, end_in_vma);
+            const u64 dma_offset = overlap_start - entry_start;
+            const PAddr phys_addr = region.base + dma_offset;
+            const u64 size_in_dma = overlap_end - overlap_start;
 
             // Create a new dmem area reflecting the pooled region
             if (vma_type == VMAType::Direct) {
@@ -909,11 +945,8 @@ u64 MemoryManager::UnmapBytesFromEntry(VAddr virtual_addr, VirtualMemoryArea vma
                 flexible_usage -= size_in_dma;
             }
 
-            // Increment through loop
-            size_to_free -= size_in_dma;
-            phys_handle++;
+            ++phys_handle;
         }
-        ASSERT_MSG(size_to_free == 0, "Failed to unmap physical memory");
     }
 
     // Mark region as free and attempt to coalesce it with neighbours.
@@ -1111,10 +1144,12 @@ s32 MemoryManager::VirtualQuery(VAddr addr, s32 flags,
     info->is_committed = vma.IsMapped() ? 1 : 0;
     info->memory_type = 0;
     if (vma.type == VMAType::Direct) {
-        // Offset is only assigned for direct mappings.
-        ASSERT_MSG(vma.phys_areas.size() > 0, "No physical backing for direct mapping?");
-        info->offset = vma.phys_areas.begin()->second.base;
-        info->memory_type = vma.phys_areas.begin()->second.memory_type;
+        // Offset is only assigned for direct mappings. The phys_areas map can be
+        // empty for orphan VMAs whose dmem was released without a matching munmap.
+        if (!vma.phys_areas.empty()) {
+            info->offset = vma.phys_areas.begin()->second.base;
+            info->memory_type = vma.phys_areas.begin()->second.memory_type;
+        }
     }
     if (vma.type == VMAType::Reserved || vma.type == VMAType::PoolReserved) {
         // Protection is hidden from reserved mappings.
