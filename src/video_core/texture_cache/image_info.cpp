@@ -186,10 +186,23 @@ void ImageInfo::UpdateSize() {
                 ImageSizeMicroTiled(mip_w, mip_h, thickness, num_bits, num_samples);
             break;
         }
+        // PRT (Partially Resident Texture) array modes use the same on-disk macro-tile
+        // layout as their non-PRT 2D equivalents — PRT only adds sparse virtual-memory
+        // residency on top, which shadPS4 does not model (no VK_KHR_sparse_* enabled).
+        // Size math therefore matches the Array2DTiled{Thin1,Thick} path. The PRT
+        // distinction IS preserved for the detiler shader (which has explicit PRT
+        // ARRAY_MODE branches in host_shaders/tiling.comp) and for the +8 macrotile
+        // offset in CalculateMacrotileMode (gated by IsPrt(array_mode)).
+        case AmdGpu::ArrayMode::ArrayPrtTiledThick:
+        case AmdGpu::ArrayMode::ArrayPrt2DTiledThick:
+        case AmdGpu::ArrayMode::ArrayPrt3DTiledThick:
         case AmdGpu::ArrayMode::Array2DTiledThick:
             thickness = 4;
             mip_d += (-mip_d) & (thickness - 1);
             [[fallthrough]];
+        case AmdGpu::ArrayMode::ArrayPrtTiledThin1:
+        case AmdGpu::ArrayMode::ArrayPrt2DTiledThin1:
+        case AmdGpu::ArrayMode::ArrayPrt3DTiledThin1:
         case AmdGpu::ArrayMode::Array2DTiledThin1: {
             ASSERT(!props.is_block);
             std::tie(mip_info.pitch, mip_info.height, mip_info.size) = ImageSizeMacroTiled(
