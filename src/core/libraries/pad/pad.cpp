@@ -174,9 +174,11 @@ int PS4_SYSV_ABI scePadGetExtControllerInformation(s32 handle,
     pInfo->capability = 0;
 
     auto res = scePadGetControllerInformation(handle, &pInfo->base);
-    if (!EmulatorSettings.IsUsingSpecialPad()) {
-        pInfo->base.connected = false;
-    }
+    // Previously: forced connected=false when not using a special pad. That made
+    // titles which poll only the extended-info call (e.g. GT7) wait forever for
+    // a controller. The base struct now reflects the same connected state for
+    // both calls; padType1/padType2/capability remain zero, which correctly
+    // signals "standard pad, no wheel/guitar extensions".
     return res;
 }
 
@@ -335,10 +337,13 @@ int PS4_SYSV_ABI scePadOpen(Libraries::UserService::OrbisUserServiceUserId userI
     s32 new_handle = pad_handle_counter++;
     pad_handle_map[{userId, type, index}] = new_handle;
 
-    handle_to_controller_map[new_handle] =
-        controllers[type == (EmulatorSettings.IsUsingSpecialPad() ? 2 : 0)
-                        ? UserManagement.GetUserByID(userId)->player_index - 1
-                        : 4];
+    // Route every successfully-opened pad handle to the player's keyboard/
+    // SDL-emulated controller. The previous logic only bound the handle whose
+    // `type` matched a specific expected slot (0 standard or 2 special) and
+    // sent everything else to controllers[4] (an unbound fallback). Titles
+    // like GT7 open both type=0 and type=2 and may poll the "wrong" handle
+    // for primary input, so no key presses were reaching the game.
+    handle_to_controller_map[new_handle] = controllers[u->player_index - 1];
     LOG_INFO(Lib_Pad,
              "called user_id = {}, type = {}, index = {}, player index = {}, out handle = {}",
              userId, type, index, u->player_index, new_handle);
