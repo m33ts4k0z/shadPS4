@@ -26,7 +26,7 @@ extern std::unique_ptr<Vulkan::Presenter> presenter;
 /**
  * Protocol summary:
  * - IPC is enabled by setting the SHADPS4_ENABLE_IPC environment variable to "true"
- * - Input will be stdin & output stderr
+ * - Input is read from stdin, output is written to stdout
  * - Strings are sent as UTF8
  * - Each communication line is terminated by a newline character ('\n')
  * - Each command parameter will be separated by a newline character ('\n'),
@@ -79,11 +79,18 @@ void IPC::Init() {
         this->InputLoop();
     });
 
-    std::cerr << ";#IPC_ENABLED\n";
-    std::cerr << ";ENABLE_MEMORY_PATCH\n";
-    std::cerr << ";ENABLE_EMU_CONTROL\n";
-    std::cerr << ";#IPC_END\n";
-    std::cerr.flush();
+    // IPC capability lines and the RESTART notification go on stdout (not
+    // stderr).  Some PS4 titles (observed with Gravity Rush 2, CUSA04943)
+    // crash deterministically when shadps4's STD_ERROR_HANDLE is a pipe at
+    // process start, so the Qt launcher overrides our stderr with a console
+    // handle and reads IPC traffic from stdout instead.  The protocol stays
+    // identical: lines prefixed with ';' are IPC, everything else is treated
+    // as TTY/log output by the launcher.
+    std::cout << ";#IPC_ENABLED\n";
+    std::cout << ";ENABLE_MEMORY_PATCH\n";
+    std::cout << ";ENABLE_EMU_CONTROL\n";
+    std::cout << ";#IPC_END\n";
+    std::cout.flush();
 
     const auto ok = run_semaphore.try_acquire_for(std::chrono::seconds(5));
     if (!ok) {
@@ -93,12 +100,12 @@ void IPC::Init() {
 }
 
 void IPC::SendRestart(const std::vector<std::string>& args) {
-    std::cerr << ";RESTART\n";
-    std::cerr << ";" << args.size() << "\n";
+    std::cout << ";RESTART\n";
+    std::cout << ";" << args.size() << "\n";
     for (const auto& arg : args) {
-        std::cerr << ";" << arg << "\n";
+        std::cout << ";" << arg << "\n";
     }
-    std::cerr.flush();
+    std::cout.flush();
 }
 
 void IPC::InputLoop() {
@@ -212,7 +219,7 @@ void IPC::InputLoop() {
             std::string config = next_str();
             Input::ParseInputConfig(config);
         } else {
-            std::cerr << ";UNKNOWN CMD: " << cmd << std::endl;
+            std::cout << ";UNKNOWN CMD: " << cmd << std::endl;
         }
     }
 }
