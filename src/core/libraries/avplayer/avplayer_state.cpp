@@ -359,6 +359,12 @@ void AvPlayerState::OnError() {
 
 void AvPlayerState::OnEOF() {
     SetState(AvState::EndOfFile);
+    // Notify the game that playback has ended. Sister callbacks OnError/Pause/Stop
+    // route through OnPlaybackStateChanged and emit a state event; OnEOF used to
+    // skip that step, which left event-driven callers (e.g. GT7 after the Sony
+    // intro) waiting on a StateStop that never arrives. Real PS4 SDK fires Stop
+    // at end-of-file too.
+    EmitEvent(AvPlayerEvents::StateStop);
 }
 
 // Called inside CONTROLLER thread
