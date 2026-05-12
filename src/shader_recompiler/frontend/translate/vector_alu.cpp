@@ -158,6 +158,8 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
         return V_FRACT_F32(inst);
     case Opcode::V_TRUNC_F32:
         return V_TRUNC_F32(inst);
+    case Opcode::V_TRUNC_F64:
+        return V_TRUNC_F64(inst);
     case Opcode::V_CEIL_F32:
         return V_CEIL_F32(inst);
     case Opcode::V_RNDNE_F32:
@@ -444,6 +446,8 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
         return V_ALIGNBYTE_B32(inst);
     case Opcode::V_MUL_F64:
         return V_MUL_F64(inst);
+    case Opcode::V_MIN_F64:
+        return V_MIN_F64(inst);
     case Opcode::V_MAX_F64:
         return V_MAX_F64(inst);
     case Opcode::V_MUL_LO_U32:
@@ -513,9 +517,13 @@ void Translator::V_CNDMASK_B32(const GcnInst& inst) {
     const IR::U1 flag = inst.src[2].field == OperandField::ScalarGPR
                             ? ir.GetThreadBitScalarReg(flag_reg)
                             : ir.GetVcc();
-    const IR::Value result =
-        ir.Select(flag, GetSrc<IR::F32>(inst.src[1]), GetSrc<IR::F32>(inst.src[0]));
-    SetDst(inst.dst[0], IR::U32F32{result});
+    // V_CNDMASK_B32 is a bit-level move (the "B32" = 32-bit bit-vector). Selecting via
+    // F32 lets the GPU canonicalize NaN-shaped bit patterns, which corrupts integer
+    // values whose bits happen to land in the F32 NaN range. Use U32 so the bits are
+    // preserved exactly.
+    const IR::U32 result =
+        IR::U32{ir.Select(flag, GetSrc<IR::U32>(inst.src[1]), GetSrc<IR::U32>(inst.src[0]))};
+    SetDst(inst.dst[0], result);
 }
 
 void Translator::V_ADD_F32(const GcnInst& inst) {
@@ -976,6 +984,11 @@ void Translator::V_FRACT_F32(const GcnInst& inst) {
 void Translator::V_TRUNC_F32(const GcnInst& inst) {
     const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
     SetDst(inst.dst[0], ir.FPTrunc(src0));
+}
+
+void Translator::V_TRUNC_F64(const GcnInst& inst) {
+    const IR::F64 src0{GetSrc64<IR::F64>(inst.src[0])};
+    SetDst64(inst.dst[0], ir.FPTrunc(src0));
 }
 
 void Translator::V_CEIL_F32(const GcnInst& inst) {
@@ -1552,6 +1565,12 @@ void Translator::V_MUL_F64(const GcnInst& inst) {
     const IR::F64 src0{GetSrc64<IR::F64>(inst.src[0])};
     const IR::F64 src1{GetSrc64<IR::F64>(inst.src[1])};
     SetDst64(inst.dst[0], ir.FPMul(src0, src1));
+}
+
+void Translator::V_MIN_F64(const GcnInst& inst) {
+    const IR::F64 src0{GetSrc64<IR::F64>(inst.src[0])};
+    const IR::F64 src1{GetSrc64<IR::F64>(inst.src[1])};
+    SetDst64(inst.dst[0], ir.FPMin(src0, src1));
 }
 
 void Translator::V_MAX_F64(const GcnInst& inst) {

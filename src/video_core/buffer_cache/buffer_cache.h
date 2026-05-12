@@ -124,9 +124,13 @@ public:
     void CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds);
 
     /// Obtains a buffer for the specified region.
+    /// `skip_stream_buffer` disables the streaming-heap fast path even for small read-only data;
+    /// pass true from BindBuffers when the descriptor set also contains a writable buffer, so
+    /// reads + writes can't be split across two VkBuffers aliasing the same guest VA range.
     [[nodiscard]] std::pair<Buffer*, u32> ObtainBuffer(VAddr gpu_addr, u32 size, bool is_written,
                                                        bool is_texel_buffer = false,
-                                                       BufferId buffer_id = {});
+                                                       BufferId buffer_id = {},
+                                                       bool skip_stream_buffer = false);
 
     /// Attempts to obtain a buffer without modifying the cache contents.
     [[nodiscard]] std::pair<Buffer*, u32> ObtainBufferForImage(VAddr gpu_addr, u32 size);

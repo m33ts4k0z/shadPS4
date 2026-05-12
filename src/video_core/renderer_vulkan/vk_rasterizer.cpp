@@ -583,6 +583,19 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
                              Shader::PushData& push_data) {
     buffer_bindings.clear();
 
+    // If any descriptor in this set is writable, force every read in the set onto a dedicated
+    // VkBuffer instead of the streaming heap. Mixing the two splits aliased guest VAs across
+    // two physically distinct VkBuffers in one descriptor set, and NVIDIA's driver hangs on
+    // that pattern (observed with GT7's cs_0x1c0f802e: buf#0 read snapshot in stream_buffer +
+    // buf#7 write to a dedicated buffer, both contiguous in guest memory).
+    bool dispatch_has_writes = false;
+    for (const auto& d : stage.buffers) {
+        if (d.is_written && !d.IsSpecial()) {
+            dispatch_has_writes = true;
+            break;
+        }
+    }
+
     for (const auto& desc : stage.buffers) {
         const auto vsharp = desc.GetSharp(stage);
         if (!desc.IsSpecial() && vsharp.base_address != 0 && vsharp.GetSize() > 0) {
@@ -633,7 +646,8 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             }
         } else {
             const auto [vk_buffer, offset] = buffer_cache.ObtainBuffer(
-                vsharp.base_address, size, desc.is_written, desc.is_formatted, buffer_id);
+                vsharp.base_address, size, desc.is_written, desc.is_formatted, buffer_id,
+                /*skip_stream_buffer=*/dispatch_has_writes);
             const u32 offset_aligned = Common::AlignDown(offset, alignment);
             const u32 adjust = offset - offset_aligned;
             ASSERT(adjust % 4 == 0);
