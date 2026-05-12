@@ -136,11 +136,21 @@ struct VirtualMemoryArea {
             return false;
         }
         if (type == VMAType::Direct && next.type == VMAType::Direct) {
-            auto& last_phys = std::prev(phys_areas.end())->second;
-            auto& first_next_phys = next.phys_areas.begin()->second;
-            if (last_phys.base + last_phys.size != first_next_phys.base ||
-                last_phys.memory_type != first_next_phys.memory_type) {
-                return false;
+            // Direct VMAs may have empty phys_areas if Free() detached all of their
+            // backing on sceKernelReleaseDirectMemory before the game called munmap.
+            // An orphan-and-live pair never describes a contiguous physical range,
+            // so refuse to merge across the boundary.
+            if (phys_areas.empty() || next.phys_areas.empty()) {
+                if (phys_areas.empty() != next.phys_areas.empty()) {
+                    return false;
+                }
+            } else {
+                auto& last_phys = std::prev(phys_areas.end())->second;
+                auto& first_next_phys = next.phys_areas.begin()->second;
+                if (last_phys.base + last_phys.size != first_next_phys.base ||
+                    last_phys.memory_type != first_next_phys.memory_type) {
+                    return false;
+                }
             }
         }
         if (prot != next.prot || type != next.type) {
