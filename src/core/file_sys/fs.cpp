@@ -63,9 +63,38 @@ std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_rea
         *is_read_only = mount->read_only;
     }
 
-    // Nothing to do if getting the mount itself.
+    // Resolving the mount root itself.  This previously returned
+    // mount->host_path unconditionally, which silently ignored path_type.
+    // IterateDirectory relies on calling GetHostPath for the mount root
+    // twice -- once as HostPathType::Base and once as HostPathType::Patch
+    // -- so it can walk both directories and union their entries.  With
+    // path_type ignored, both calls returned the base dir, Pass 2 of the
+    // iteration re-walked base, and any file that existed only at the
+    // *patch root* (i.e. with a filename that did not already exist in
+    // the base dir) was invisible to the guest.  In particular, delta
+    // updates that ship additional psarc files and a sce_discmap_patch.plt
+    // at the patch root -- e.g. Gravity Rush 2's (CUSA04943) 1.11
+    // update -- could not be discovered by Sony's libSceFios2, so the
+    // patched eboot kept reading stale base-version data and eventually
+    // dereferenced a null lookup result.  Honour the requested path_type
+    // for the mount itself so the patch-root scan returns the right
+    // directory.
     const auto corrected_path_sanitized = RemoveTrailingSlashes(corrected_path);
     if (corrected_path_sanitized == mount->mount) {
+        if (path_type == HostPathType::Mod) {
+            auto mods_root = mount->host_path;
+            mods_root += "-mods";
+            return mods_root;
+        }
+        if (path_type == HostPathType::Patch) {
+            auto patch_root = mount->host_path;
+            patch_root += "-UPDATE";
+            if (!std::filesystem::exists(patch_root)) {
+                patch_root = mount->host_path;
+                patch_root += "-patch";
+            }
+            return patch_root;
+        }
         return mount->host_path;
     }
 
