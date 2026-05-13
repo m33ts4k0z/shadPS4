@@ -483,6 +483,8 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
             "libSceFontFt.sprx",
             "libSceFontGs.sprx",
             "libSceNgs2.sprx",
+            "libSceJson.sprx",
+            "libSceJson2.sprx",
         };
         for (const char* mod : kSysModulePreloadOrder) {
             const auto path = sys_modules_path / mod;
