@@ -42,7 +42,17 @@
 
 namespace Libraries::Kernel {
 
-static u64 g_stack_chk_guard = 0xDEADBEEF54321ABC; // dummy return
+// FreeBSD libc declares __stack_chk_guard as `uintptr_t __stack_chk_guard[8]`. Some PS4 game
+// code (e.g. GT Sport / CUSA02168) loads this symbol's *first element* as a pointer and
+// dereferences it: `mov rax, [&__stack_chk_guard]; mov rax, [rax-8]; mov rbx, [rax+0x778]; ...`.
+// That access pattern looks like TLS-lookup of a singleton followed by an early `test rax, rax;
+// jz` bailout. Point the first element at a zero-filled scratch buffer big enough to satisfy
+// the chained offsets so the deref doesn't fault and the `jz` short-circuits.
+alignas(16) static u8 g_stack_chk_guard_scratch[0x1000] = {};
+static u64 g_stack_chk_guard[8] = {
+    reinterpret_cast<u64>(&g_stack_chk_guard_scratch[8]),
+    0, 0, 0, 0, 0, 0, 0,
+};
 
 boost::asio::io_context io_context;
 static std::mutex m_asio_req;
@@ -459,7 +469,7 @@ void RegisterLib(Core::Loader::SymbolsResolver* sym) {
     Libraries::Kernel::RegisterDebug(sym);
     Libraries::Kernel::RegisterCoredump(sym);
 
-    LIB_OBJ("f7uOxY9mM1U", "libkernel", 1, "libkernel", &g_stack_chk_guard);
+    LIB_OBJ("f7uOxY9mM1U", "libkernel", 1, "libkernel", g_stack_chk_guard);
     LIB_FUNCTION("D4yla3vx4tY", "libkernel", 1, "libkernel", sceKernelError);
     LIB_FUNCTION("YeU23Szo3BM", "libkernel", 1, "libkernel", sceKernelGetAllowedSdkVersionOnSystem);
     LIB_FUNCTION("Mv1zUObHvXI", "libkernel", 1, "libkernel", sceKernelGetSystemSwVersion);
