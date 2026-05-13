@@ -592,8 +592,14 @@ static std::pair<bool, u64> TryPatch(u8* code, PatchModule* module) {
                         WriteProcessMemory(GetCurrentProcess(), code, buf,
                                            instruction.length, &written);
                         FlushInstructionCache(GetCurrentProcess(), code, instruction.length);
-                        patch_gen.nop(instruction.length);
+                        // Do NOT call patch_gen.nop() here. patch_gen is in USER_BUF
+                        // mode pointing at the module's text, so xbyak-emitted multi-byte
+                        // NOPs would clobber the JMP we just wrote via WriteProcessMemory.
                     }
+                    module->patched.insert(code);
+                    LOG_DEBUG(Core, "Patched (WPM) '{}' at: {}",
+                              ZydisMnemonicGetString(instruction.mnemonic), fmt::ptr(code));
+                    return std::make_pair(true, instruction.length);
 #else
                     // Replace instruction with near jump to the trampoline.
                     patch_gen.jmp(trampoline_ptr, Xbyak::CodeGenerator::LabelType::T_NEAR);
