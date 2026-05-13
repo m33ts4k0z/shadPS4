@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -141,6 +144,13 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
         const u64 segment_size = GetAlignedSize(phdr);
         if (do_map) {
             // Convert ELF flags to memory prot.
+            // GT Sport workaround: always force CpuWrite on executable segments so the
+            // cpu_patches patcher can rewrite fs:[0] / stack-canary accesses at runtime. Pre-#4273
+            // (the "Proper module memory mappings" commit) all module segments were mapped RWX,
+            // and the patcher's Xbyak writes via the module's user-pointer view took effect.
+            // After #4273 segments use protections derived from ELF p_flags, and on this title
+            // the resulting PAGE_EXECUTE_READ mapping silently swallows the patcher's writes —
+            // the post-write read sees new bytes but the CPU keeps executing the originals.
             auto segment_prot = MemoryProt::NoAccess;
             if ((phdr.p_flags & PF_READ) != 0) {
                 segment_prot |= MemoryProt::CpuRead;
@@ -150,6 +160,8 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             }
             if ((phdr.p_flags & PF_EXEC) != 0) {
                 segment_prot |= MemoryProt::CpuExec;
+                // Force write permission on executable segments so the cpu_patches patcher works.
+                segment_prot |= MemoryProt::CpuWrite;
             }
 
             // Map module segments

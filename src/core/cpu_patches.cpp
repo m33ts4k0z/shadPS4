@@ -562,8 +562,42 @@ static std::pair<bool, u64> TryPatch(u8* code, PatchModule* module) {
                     // Return to the following instruction at the end of the trampoline.
                     trampoline_gen.jmp(code + instruction.length);
 
+#ifdef _WIN32
+                    // Xbyak's direct writes via user-pointer buffers silently fail to update
+                    // the page the CPU executes from for some module memory mappings (observed
+                    // in CUSA02168 / GT Sport — post-write reads of `buf[0..N]` see the new
+                    // bytes, yet the CPU keeps executing the originals). Route every code-page
+                    // write through WriteProcessMemory, which forces the kernel to update all
+                    // coherent views of the page. This applies both to the in-place jmp in the
+                    // module's text and to the trampoline area we just emitted into.
+                    const auto trampoline_end =
+                        const_cast<u8*>(trampoline_gen.getCurr());
+                    const size_t trampoline_bytes =
+                        trampoline_end - static_cast<const u8*>(trampoline_ptr);
+                    {
+                        SIZE_T written = 0;
+                        WriteProcessMemory(GetCurrentProcess(), const_cast<u8*>(trampoline_ptr),
+                                           trampoline_ptr, trampoline_bytes, &written);
+                        FlushInstructionCache(GetCurrentProcess(), trampoline_ptr,
+                                              trampoline_bytes);
+                    }
+                    {
+                        s64 rel = (s64)trampoline_ptr - ((s64)code + 5);
+                        s32 rel32 = (s32)rel;
+                        u8 buf[15] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                                      0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+                        buf[0] = 0xE9;
+                        std::memcpy(&buf[1], &rel32, sizeof(rel32));
+                        SIZE_T written = 0;
+                        WriteProcessMemory(GetCurrentProcess(), code, buf,
+                                           instruction.length, &written);
+                        FlushInstructionCache(GetCurrentProcess(), code, instruction.length);
+                        patch_gen.nop(instruction.length);
+                    }
+#else
                     // Replace instruction with near jump to the trampoline.
                     patch_gen.jmp(trampoline_ptr, Xbyak::CodeGenerator::LabelType::T_NEAR);
+#endif
                 } else {
                     patch_info.generator(code, operands, patch_gen);
                 }
