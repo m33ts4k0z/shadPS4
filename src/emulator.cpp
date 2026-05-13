@@ -460,6 +460,47 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         std::quick_exit(0);
     }
 
+    // gt7-fixes: pre-load font system modules from sys_modules. Real PS4 keeps libSceFont,
+    // libSceFontFt and the libSceFreeType chain always-loaded for any process that imports
+    // them; games therefore never call sceSysmoduleLoadModule for these and rely on the
+    // imports being resolved at startup. shadps4 has the LLE allowlist in sysmodule_internal
+    // but only triggers it from explicit sysmodule loads, so the game's imports bind to
+    // AeroLib stubs and text renders as garbage. Load the sprx files now if they exist,
+    // then re-relocate imports so the game's stubs rebind to the LLE module's exports.
+    {
+        const auto sys_modules_path = EmulatorSettings.GetSysModulesDir();
+        // Order matters: FreeType core first (libSceFontFt depends on it), then OT
+        // variants/SubFunc, then the Font modules, then optional FontGs/WkFontConfig.
+        static constexpr std::array kFontPreloadOrder = {
+            "libfreetype.sprx",
+            "libSceFreeTypeOt.sprx",
+            "libSceFreeTypeHinter.sprx",
+            "libSceFreeTypeOl.sprx",
+            "libSceFreeTypeOptOl.sprx",
+            "libSceFreeTypeSubFunc.sprx",
+            "libSceFont.sprx",
+            "libSceFontFt.sprx",
+            "libSceFontGs.sprx",
+        };
+        for (const char* mod : kFontPreloadOrder) {
+            const auto path = sys_modules_path / mod;
+            if (std::filesystem::exists(path)) {
+                s32 start_result = 0;
+                s32 handle = linker->LoadAndStartModule(path, 0, nullptr, &start_result);
+                if (handle >= 0) {
+                    LOG_INFO(Loader, "Pre-loaded {} (handle={}, start_result={:#x})", mod,
+                             handle, start_result);
+                } else {
+                    LOG_WARNING(Loader, "Failed to pre-load {}: handle={}", mod, handle);
+                }
+            } else {
+                LOG_WARNING(Loader, "{} not found in {}", mod,
+                            Common::FS::PathToUTF8String(sys_modules_path));
+            }
+        }
+        linker->RelocateAllImports();
+    }
+
 #ifdef ENABLE_DISCORD_RPC
     // Discord RPC
     if (EmulatorSettings.IsDiscordRPCEnabled()) {
