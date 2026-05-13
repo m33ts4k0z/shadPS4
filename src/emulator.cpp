@@ -460,18 +460,19 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         std::quick_exit(0);
     }
 
-    // gt7-fixes: pre-load font system modules from sys_modules. Real PS4 keeps libSceFont,
-    // libSceFontFt and the libSceFreeType chain always-loaded for any process that imports
-    // them; games therefore never call sceSysmoduleLoadModule for these and rely on the
-    // imports being resolved at startup. shadps4 has the LLE allowlist in sysmodule_internal
-    // but only triggers it from explicit sysmodule loads, so the game's imports bind to
-    // AeroLib stubs and text renders as garbage. Load the sprx files now if they exist,
-    // then re-relocate imports so the game's stubs rebind to the LLE module's exports.
+    // Pre-load select system modules from sys_modules at startup. Real PS4 keeps these
+    // always-loaded for any process that imports them; games therefore never call
+    // sceSysmoduleLoadModule for them and rely on the imports being resolved at startup.
+    // shadps4 has the LLE allowlist in sysmodule_internal but only triggers it from
+    // explicit sysmodule loads, so the game's imports bind to AeroLib stubs and behaviour
+    // degrades (garbled text for fonts, hot-loops on voice state for Ngs2, etc.). Load
+    // the sprx files now if they exist, then re-relocate imports so the game's stubs
+    // rebind to the LLE module's exports.
     {
         const auto sys_modules_path = EmulatorSettings.GetSysModulesDir();
-        // Order matters: FreeType core first (libSceFontFt depends on it), then OT
-        // variants/SubFunc, then the Font modules, then optional FontGs/WkFontConfig.
-        static constexpr std::array kFontPreloadOrder = {
+        // Order matters: dependencies first. FreeType chain before Font modules.
+        // libSceNgs2 is independent — appended at the end.
+        static constexpr std::array kSysModulePreloadOrder = {
             "libfreetype.sprx",
             "libSceFreeTypeOt.sprx",
             "libSceFreeTypeHinter.sprx",
@@ -481,8 +482,9 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
             "libSceFont.sprx",
             "libSceFontFt.sprx",
             "libSceFontGs.sprx",
+            "libSceNgs2.sprx",
         };
-        for (const char* mod : kFontPreloadOrder) {
+        for (const char* mod : kSysModulePreloadOrder) {
             const auto path = sys_modules_path / mod;
             if (std::filesystem::exists(path)) {
                 s32 start_result = 0;

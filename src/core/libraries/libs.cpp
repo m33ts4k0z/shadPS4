@@ -28,6 +28,7 @@
 #include "core/libraries/move/move.h"
 #include "core/libraries/network/http.h"
 #include "core/libraries/network/http2.h"
+#include "core/libraries/ngs2/ngs2.h"
 #include "core/libraries/network/net.h"
 #include "core/libraries/network/netctl.h"
 #include "core/libraries/network/ssl.h"
@@ -154,6 +155,12 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::Rudp::RegisterLib(sym);
     Libraries::VrTracker::RegisterLib(sym);
     Libraries::ContentExport::RegisterLib(sym);
+    // Ngs2 intentionally NOT registered: v0.12.5 had it compiled but unregistered, so all calls
+    // fell through to CommonStub returning 0, which GT Sport's audio init was happy with.
+    // Wiring our real Ngs2 HLE impl makes the game's audio thread hot-loop on
+    // sceNgs2VoiceGetState forever (76k+ calls, no progress). Prefer LLE-loading the real
+    // libSceNgs2.sprx (see emulator.cpp preload list); skip HLE registration.
+    // Libraries::Ngs2::RegisterLib(sym);
     Libraries::VideoRecording::RegisterLib(sym);
 
     // Loading libSceSsl is locked behind a title workaround that currently applies to nothing.
