@@ -28,11 +28,14 @@ s32 PS4_SYSV_ABI sceDeviceServiceTerminate() {
     return ORBIS_OK;
 }
 
-s32 PS4_SYSV_ABI sceDeviceServiceGetEventState(s32* state) {
+// Real PS4 signature is (s32 event_id, s32* state) — GT Sport calls this with
+// event_id in rdi and a valid out-pointer in rsi. The previous one-arg form
+// treated event_id as the out-pointer and wrote *(int*)1 — instant AV.
+s32 PS4_SYSV_ABI sceDeviceServiceGetEventState(s32 event_id, s32* state) {
     if (state != nullptr) {
         *state = 0;
     }
-    LOG_TRACE(Lib_DeviceService, "(STUBBED) called");
+    LOG_TRACE(Lib_DeviceService, "(STUBBED) called event_id={}", event_id);
     return ORBIS_OK;
 }
 

@@ -13,7 +13,7 @@ namespace Libraries::DeviceService {
 
 s32 PS4_SYSV_ABI sceDeviceServiceInitialize();
 s32 PS4_SYSV_ABI sceDeviceServiceTerminate();
-s32 PS4_SYSV_ABI sceDeviceServiceGetEventState(s32* state);
+s32 PS4_SYSV_ABI sceDeviceServiceGetEventState(s32 event_id, s32* state);
 s32 PS4_SYSV_ABI sceDeviceServiceGetGeneration();
 s32 PS4_SYSV_ABI sceDeviceServiceQueryDeviceInfo_();
 s32 PS4_SYSV_ABI sceMbusGetDeviceInfoByConditionForDeviceService();
