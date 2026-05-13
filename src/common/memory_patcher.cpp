@@ -190,6 +190,33 @@ void ApplyPatchesFromXML(std::filesystem::path path) {
     }
 }
 
+static bool WriteEbootBytes(u8* dst, const u8* src, size_t n) {
+#if defined(_WIN32)
+    SIZE_T written = 0;
+    if (!WriteProcessMemory(GetCurrentProcess(), dst, src, n, &written) || written != n) {
+        return false;
+    }
+    FlushInstructionCache(GetCurrentProcess(), dst, n);
+    return true;
+#else
+    std::memcpy(dst, src, n);
+    return true;
+#endif
+}
+
+static const u8* FindSignature(const u8* haystack, size_t hay_len, const u8* needle,
+                               size_t needle_len) {
+    if (needle_len == 0 || hay_len < needle_len) {
+        return nullptr;
+    }
+    for (const u8* p = haystack; p <= haystack + hay_len - needle_len; ++p) {
+        if (std::memcmp(p, needle, needle_len) == 0) {
+            return p;
+        }
+    }
+    return nullptr;
+}
+
 // GT Sport (CUSA02168): the game's analytics telemetry path tries to virtual-call into
 // a `GameAnalytics::Telemetry::Exception` shared_ptr that its factory returned empty.
 // The factory hits its build() early-exit path (because shadps4's HLE chain returns 0
@@ -213,14 +240,7 @@ static void ApplyGtSportTelemetryBypass() {
                                                 0x8b, 0x07, 0xff, 0x50, 0x18, 0x84, 0xc0, 0x75,
                                                 0x43};
     const u8* const begin = reinterpret_cast<const u8*>(g_eboot_address);
-    const u8* const end = begin + g_eboot_image_size - kSig.size();
-    const u8* match = nullptr;
-    for (const u8* p = begin; p <= end; ++p) {
-        if (std::memcmp(p, kSig.data(), kSig.size()) == 0) {
-            match = p;
-            break;
-        }
-    }
+    const u8* match = FindSignature(begin, g_eboot_image_size, kSig.data(), kSig.size());
     if (match == nullptr) {
         LOG_WARNING(Loader,
                     "GT Sport telemetry bypass: signature not found (build changed?); "
@@ -232,30 +252,58 @@ static void ApplyGtSportTelemetryBypass() {
     // (mov al,1 ; 4x nop). The subsequent `test al, al; jne` then takes the
     // success branch into the function's stack-canary cleanup + ret.
     u8* const patch_at = const_cast<u8*>(match) + 7;
-#if defined(_WIN32)
-    SIZE_T written = 0;
     static constexpr std::array<u8, 6> kNop6 = {0xb0, 0x01, 0x90, 0x90, 0x90, 0x90};
-    if (!WriteProcessMemory(GetCurrentProcess(), patch_at, kNop6.data(), kNop6.size(), &written) ||
-        written != kNop6.size()) {
+    if (!WriteEbootBytes(patch_at, kNop6.data(), kNop6.size())) {
         LOG_ERROR(Loader, "GT Sport telemetry bypass: WriteProcessMemory failed at {}",
                   fmt::ptr(patch_at));
         return;
     }
-    FlushInstructionCache(GetCurrentProcess(), patch_at, kNop6.size());
-#else
-    patch_at[0] = 0xb0;
-    patch_at[1] = 0x01;
-    patch_at[2] = 0x90;
-    patch_at[3] = 0x90;
-    patch_at[4] = 0x90;
-    patch_at[5] = 0x90;
-#endif
     LOG_INFO(Loader, "GT Sport telemetry bypass: patched analytics-report virtual call at {}",
+             fmt::ptr(patch_at));
+}
+
+// GT Sport (CUSA02168): even after the analytics-report crash is bypassed, the AdHoc
+// VM is still throwing `invalid operand ((nil)) to unary operator __not__` at the
+// post-boot listener `ProductBootScreen.ad:99`. The throw site is the AdHoc VM's
+// generic unary-operator dispatch (m_unary_operator.cpp:50): it calls an
+// `is_supported_operand` check; on `false` it `je`s into the throw path. NOP that
+// `je` so the dispatch always falls through to the operator's `apply()` virtual
+// call, which for `__not__` on a nil/empty operand returns `true` (Lua-like
+// semantic) instead of throwing.
+static void ApplyGtSportAdhocNotNilTolerate() {
+    if (g_game_serial != "CUSA02168") {
+        return;
+    }
+    if (g_eboot_address == 0 || g_eboot_image_size == 0) {
+        return;
+    }
+
+    // 14-byte signature: `test al,al; je +0x4f; mov rax,[r15]; lea rsi,[rbp-0x88]`
+    static constexpr std::array<u8, 14> kSig = {0x84, 0xc0, 0x74, 0x4f, 0x49, 0x8b, 0x07,
+                                                0x48, 0x8d, 0xb5, 0x78, 0xff, 0xff, 0xff};
+    const u8* const begin = reinterpret_cast<const u8*>(g_eboot_address);
+    const u8* match = FindSignature(begin, g_eboot_image_size, kSig.data(), kSig.size());
+    if (match == nullptr) {
+        LOG_WARNING(Loader, "GT Sport adhoc not-nil bypass: signature not found");
+        return;
+    }
+    u8* const patch_at = const_cast<u8*>(match) + 2;  // skip past test al, al
+    static constexpr std::array<u8, 2> kNop2 = {0x90, 0x90};
+    if (!WriteEbootBytes(patch_at, kNop2.data(), kNop2.size())) {
+        LOG_ERROR(Loader, "GT Sport adhoc not-nil bypass: WriteProcessMemory failed at {}",
+                  fmt::ptr(patch_at));
+        return;
+    }
+    LOG_INFO(Loader, "GT Sport adhoc not-nil bypass: patched unary __not__ throw at {}",
              fmt::ptr(patch_at));
 }
 
 void OnGameLoaded() {
     ApplyGtSportTelemetryBypass();
+    // ApplyGtSportAdhocNotNilTolerate() disabled: patching `not nil` to succeed
+    // just exposes the *next* nil-derived throw (HObject from h_object.h:262), so
+    // it's whack-a-mole rather than a real fix. Kept in the source for next session
+    // when we can chase the underlying nil-producing HLE.
 
     std::filesystem::path patch_dir = Common::FS::GetUserPath(Common::FS::PathType::PatchesDir);
     if (!patch_file.empty()) {
