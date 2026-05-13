@@ -25,8 +25,48 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <dbghelp.h>
 #pragma comment(lib, "dbghelp.lib")
+
+static void CrashTerminateHandler() {
+    FILE* f = std::fopen("C:/Users/ff_be/AppData/Roaming/shadPS4/log/crash_trace.txt", "w");
+    if (!f) f = stderr;
+    std::fprintf(f, "\n!!! std::terminate called (probably abort/uncaught exception) !!!\n");
+    void* frames[64];
+    auto count = RtlCaptureStackBackTrace(0, 64, frames, nullptr);
+    HANDLE proc = GetCurrentProcess();
+    static bool sym_init = false;
+    if (!sym_init) {
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        SymInitialize(proc, nullptr, TRUE);
+        sym_init = true;
+    }
+    char sym_buf[sizeof(SYMBOL_INFO) + 256];
+    auto* sym = reinterpret_cast<SYMBOL_INFO*>(sym_buf);
+    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+    sym->MaxNameLen = 255;
+    IMAGEHLP_LINE64 line{};
+    line.SizeOfStruct = sizeof(line);
+    std::fprintf(f, "  Stack (%u frames):\n", (unsigned)count);
+    for (unsigned i = 0; i < count; i++) {
+        DWORD64 disp = 0;
+        DWORD line_disp = 0;
+        const char* name = "<unknown>";
+        const char* file_n = "";
+        DWORD line_no = 0;
+        if (SymFromAddr(proc, (DWORD64)(uintptr_t)frames[i], &disp, sym)) name = sym->Name;
+        if (SymGetLineFromAddr64(proc, (DWORD64)(uintptr_t)frames[i], &line_disp, &line)) {
+            file_n = line.FileName;
+            line_no = line.LineNumber;
+        }
+        std::fprintf(f, "    [%2u] 0x%p  %s  (%s:%lu)\n", i, frames[i], name, file_n, line_no);
+    }
+    std::fflush(f);
+    if (f != stderr) std::fclose(f);
+    std::abort();
+}
 
 static LONG WINAPI CrashStackTraceHandler(EXCEPTION_POINTERS* ep) {
     // Write to a fixed file path so we don't depend on stderr / stdout still being usable.
@@ -150,6 +190,7 @@ int main(int argc, char* argv[]) {
     // Keep only the last-resort SEH filter — vectored handler was intercepting and preventing
     // shadps4's own VEH chain from running the cpu_patches handler.
     SetUnhandledExceptionFilter(CrashStackTraceHandler);
+    std::set_terminate(CrashTerminateHandler);
 #endif
 
     CLI::App app{"shadPS4 Emulator CLI"};
