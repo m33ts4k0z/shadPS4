@@ -19,13 +19,12 @@ namespace Libraries::SysModule {
 static std::mutex g_mutex{};
 
 s32 PS4_SYSV_ABI sceSysmoduleGetModuleHandleInternal(OrbisSysModuleInternal id, s32* handle) {
-    LOG_INFO(Lib_SysModule, "called");
-    if ((id & 0x7fffffff) == 0) {
-        return ORBIS_SYSMODULE_INVALID_ID;
+    // GT Sport regression bisect: pre-#4102 was a no-arg stub returning ORBIS_OK.
+    LOG_INFO(Lib_SysModule, "(DUMMY) called, id = {:#x}", static_cast<u32>(id));
+    if (handle != nullptr) {
+        *handle = 0;
     }
-
-    std::scoped_lock lk{g_mutex};
-    return getModuleHandle(id, handle);
+    return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleGetModuleInfoForUnwind(VAddr addr, s32 flags,
@@ -53,49 +52,29 @@ s32 PS4_SYSV_ABI sceSysmoduleIsCameraPreloaded() {
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleIsLoaded(OrbisSysModule id) {
-    if (id == 0) {
+    // GT Sport regression bisect: pre-#4102 was a dummy returning ORBIS_OK.
+    LOG_INFO(Lib_SysModule, "(DUMMY) called, id = {:#x}", static_cast<u32>(id));
+    if (static_cast<u16>(id) == 0) {
         return ORBIS_SYSMODULE_INVALID_ID;
     }
-
-    std::scoped_lock lk{g_mutex};
-    return getModuleHandle(id, nullptr);
+    return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleIsLoadedInternal(OrbisSysModuleInternal id) {
-    if ((id & 0x7fffffff) == 0) {
+    // GT Sport regression bisect: pre-#4102 was a dummy returning ORBIS_OK.
+    LOG_INFO(Lib_SysModule, "(DUMMY) called, id = {:#x}", static_cast<u32>(id));
+    if ((static_cast<u32>(id) & 0x7FFFFFFF) == 0) {
         return ORBIS_SYSMODULE_INVALID_ID;
     }
-
-    std::scoped_lock lk{g_mutex};
-    return getModuleHandle(id, nullptr);
+    return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleLoadModule(OrbisSysModule id) {
-    LOG_INFO(Lib_SysModule, "called, id = {:#x}", id);
-    s32 result = validateModuleId(id);
-    if (result < ORBIS_OK) {
-        return result;
-    }
-
-    // Only locks for internal loadModule call.
-    {
-        std::scoped_lock lk{g_mutex};
-        result = loadModule(id, 0, nullptr, nullptr);
-    }
-
-    if (result == ORBIS_KERNEL_ERROR_ESTART) {
-        s32 sdk_ver = 0;
-        result = Kernel::sceKernelGetCompiledSdkVersion(&sdk_ver);
-        if (sdk_ver < Common::ElfInfo::FW_115 || result != ORBIS_OK) {
-            return ORBIS_KERNEL_ERROR_EINVAL;
-        } else {
-            return ORBIS_KERNEL_ERROR_ESTART;
-        }
-    }
-
-    // The real library has some weird workaround for CUSA01478 and CUSA01495 here.
-    // Unless this is proven necessary, I don't plan to handle this.
-    return result;
+    // GT Sport regression bisect: pre-#4102 was a one-liner returning ORBIS_OK.
+    // The new validate+load path returns ORBIS_KERNEL_ERROR_EINVAL for SDK < FW_115,
+    // which GT Sport (SDK 5.05) trips, causing its boot script's __not__ nil crash.
+    LOG_INFO(Lib_SysModule, "(DUMMY) called, id = {:#x}", static_cast<u32>(id));
+    return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleLoadModuleByNameInternal() {
@@ -104,34 +83,16 @@ s32 PS4_SYSV_ABI sceSysmoduleLoadModuleByNameInternal() {
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleLoadModuleInternal(OrbisSysModuleInternal id) {
-    LOG_INFO(Lib_SysModule, "called, id = {:#x}", id);
-    s32 result = validateModuleId(id);
-    if (result < ORBIS_OK) {
-        return result;
-    }
-
-    // This specific module ID is loaded unlocked.
-    if (id == 0x80000039) {
-        return loadModule(id, 0, nullptr, nullptr);
-    }
-    std::scoped_lock lk{g_mutex};
-    return loadModule(id, 0, nullptr, nullptr);
+    // GT Sport regression bisect: pre-#4102 was a no-arg stub returning ORBIS_OK.
+    LOG_INFO(Lib_SysModule, "(DUMMY) called, id = {:#x}", static_cast<u32>(id));
+    return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleLoadModuleInternalWithArg(OrbisSysModuleInternal id, s32 argc,
                                                        const void* argv, u64 unk, s32* res_out) {
-    LOG_INFO(Lib_SysModule, "called, id = {:#x}", id);
-    s32 result = validateModuleId(id);
-    if (result < ORBIS_OK) {
-        return result;
-    }
-
-    if (unk != 0) {
-        return ORBIS_SYSMODULE_INVALID_ID;
-    }
-
-    std::scoped_lock lk{g_mutex};
-    return loadModule(id, argc, argv, res_out);
+    // GT Sport regression bisect: pre-#4102 was a no-arg stub returning ORBIS_OK.
+    LOG_INFO(Lib_SysModule, "(DUMMY) called, id = {:#x}", static_cast<u32>(id));
+    return ORBIS_OK;
 }
 
 s32 PS4_SYSV_ABI sceSysmoduleMapLibcForLibkernel() {
