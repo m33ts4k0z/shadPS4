@@ -52,17 +52,17 @@ s32 PS4_SYSV_ABI sceMbusGetDeviceInfoByConditionForDeviceService() {
 }
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym) {
-    LIB_FUNCTION("84fDxStrG44", "libSceDeviceService", 1, "libSceDeviceService",
+    LIB_FUNCTION("84fDxStrG44", "libSceDeviceService", 1, "libSceMbus",
                  sceDeviceServiceInitialize);
-    LIB_FUNCTION("Uq8uW74rVpU", "libSceDeviceService", 1, "libSceDeviceService",
+    LIB_FUNCTION("Uq8uW74rVpU", "libSceDeviceService", 1, "libSceMbus",
                  sceDeviceServiceTerminate);
-    LIB_FUNCTION("9ddRUOV8Q5A", "libSceDeviceService", 1, "libSceDeviceService",
+    LIB_FUNCTION("9ddRUOV8Q5A", "libSceDeviceService", 1, "libSceMbus",
                  sceDeviceServiceGetEventState);
-    LIB_FUNCTION("oFon+A5v1z8", "libSceDeviceService", 1, "libSceDeviceService",
+    LIB_FUNCTION("oFon+A5v1z8", "libSceDeviceService", 1, "libSceMbus",
                  sceDeviceServiceGetGeneration);
-    LIB_FUNCTION("UNMEa+5lrUA", "libSceDeviceService", 1, "libSceDeviceService",
+    LIB_FUNCTION("UNMEa+5lrUA", "libSceDeviceService", 1, "libSceMbus",
                  sceDeviceServiceQueryDeviceInfo_);
-    LIB_FUNCTION("UWh5t-hCbzQ", "libSceDeviceService", 1, "libSceDeviceService",
+    LIB_FUNCTION("UWh5t-hCbzQ", "libSceDeviceService", 1, "libSceMbus",
                  sceMbusGetDeviceInfoByConditionForDeviceService);
 }
 

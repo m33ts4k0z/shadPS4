@@ -39,6 +39,7 @@ constexpr auto Lib_CommonDlg = "Lib.CommonDlg";                     ///< The Lib
 constexpr auto Lib_CompanionHttpd = "Lib.CompanionHttpd";           ///< The LibSceCompanionHttpd implementation.
 constexpr auto Lib_CompanionUtil = "Lib.CompanionUtil";             ///< The LibSceCompanionUtil implementation.
 constexpr auto Lib_ContentExport = "Lib.ContentExport";             ///< The LibSceContentExport implementation.
+constexpr auto Lib_DeviceService = "Lib.DeviceService";             ///< The LibSceDeviceService implementation.
 constexpr auto Lib_DiscMap = "Lib.DiscMap";                         ///< The LibSceDiscMap implementation.
 constexpr auto Lib_ErrorDialog = "Lib.ErrorDialog";                 ///< The LibSceErrorDialog implementation.
 constexpr auto Lib_Fiber = "Lib.Fiber";                             ///< The LibSceFiber implementation.

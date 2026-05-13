@@ -12,6 +12,7 @@
 #include "core/libraries/companion/companion_httpd.h"
 #include "core/libraries/companion/companion_util.h"
 #include "core/libraries/content_export/content_export.h"
+#include "core/libraries/device_service/device_service.h"
 #include "core/libraries/disc_map/disc_map.h"
 #include "core/libraries/game_live_streaming/gamelivestreaming.h"
 #include "core/libraries/gnmdriver/gnmdriver.h"
@@ -155,6 +156,7 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::Rudp::RegisterLib(sym);
     Libraries::VrTracker::RegisterLib(sym);
     Libraries::ContentExport::RegisterLib(sym);
+    Libraries::DeviceService::RegisterLib(sym);
     // Ngs2 intentionally NOT registered: v0.12.5 had it compiled but unregistered, so all calls
     // fell through to CommonStub returning 0, which GT Sport's audio init was happy with.
     // Wiring our real Ngs2 HLE impl makes the game's audio thread hot-loop on

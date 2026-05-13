@@ -497,6 +497,8 @@ set(SYSTEM_LIBS src/core/libraries/system/commondialog.cpp
                 src/core/libraries/content_export/content_export.cpp
                 src/core/libraries/content_export/content_export.h
                 src/core/libraries/content_export/content_export_error.h
+                src/core/libraries/device_service/device_service.cpp
+                src/core/libraries/device_service/device_service.h
                 src/core/libraries/video_recording/video_recording.cpp
                 src/core/libraries/video_recording/video_recording.h
                 src/core/libraries/video_recording/video_recording_error.h
