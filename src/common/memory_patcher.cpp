@@ -262,6 +262,47 @@ static void ApplyGtSportTelemetryBypass() {
              fmt::ptr(patch_at));
 }
 
+// GT Sport (CUSA02168) DIAGNOSTIC PROBE: place int3 at the very first instruction of
+// the AdHoc unary-operator throw branch, so when `is_supported_operand` returns
+// false the SEH filter (CrashStackTraceHandler in main.cpp) dumps r15 et al.
+// At that PC r15 still holds the operand pointer (the throw path opens with
+// `mov rdi, r15; call ...`), so the dump tells us exactly which Variant/HObject
+// pointer was nil. One-shot diagnostic — game dies at the throw.
+static void ApplyGtSportAdhocThrowProbe() {
+    if (g_game_serial != "CUSA02168") {
+        return;
+    }
+    if (g_eboot_address == 0 || g_eboot_image_size == 0) {
+        return;
+    }
+
+    // Same 14-byte unary-throw site signature. Throw branch starts at sig+0x53 with
+    // `4c 89 ff` (mov rdi, r15) then `e8 96 87 02 00` (call 0x8017cca30). Instead of
+    // tripping the int3 BEFORE mov rdi,r15 (which would let the cpu walk past int3
+    // through `89 ff = mov edi, edi`, zero-extending RDI and corrupting the operand
+    // pointer), let mov rdi, r15 execute first and place int3 at the call's e8 byte
+    // (sig+0x56). At trap time both r15 AND rdi hold the operand pointer.
+    static constexpr std::array<u8, 14> kSig = {0x84, 0xc0, 0x74, 0x4f, 0x49, 0x8b, 0x07,
+                                                0x48, 0x8d, 0xb5, 0x78, 0xff, 0xff, 0xff};
+    const u8* const begin = reinterpret_cast<const u8*>(g_eboot_address);
+    const u8* match = FindSignature(begin, g_eboot_image_size, kSig.data(), kSig.size());
+    if (match == nullptr) {
+        LOG_WARNING(Loader, "GT Sport adhoc throw probe: signature not found");
+        return;
+    }
+    u8* const trap_at = const_cast<u8*>(match) + 0x56;
+    static constexpr std::array<u8, 1> kInt3 = {0xcc};
+    if (!WriteEbootBytes(trap_at, kInt3.data(), kInt3.size())) {
+        LOG_ERROR(Loader, "GT Sport adhoc throw probe: WriteProcessMemory failed at {}",
+                  fmt::ptr(trap_at));
+        return;
+    }
+    LOG_INFO(Loader,
+             "GT Sport adhoc throw probe: int3 armed at {} (throw path entry); on trap, "
+             "see crash_trace.txt for r15 = operand pointer.",
+             fmt::ptr(trap_at));
+}
+
 // GT Sport (CUSA02168): even after the analytics-report crash is bypassed, the AdHoc
 // VM is still throwing `invalid operand ((nil)) to unary operator __not__` at the
 // post-boot listener `ProductBootScreen.ad:99`. The throw site is the AdHoc VM's
@@ -300,10 +341,18 @@ static void ApplyGtSportAdhocNotNilTolerate() {
 
 void OnGameLoaded() {
     ApplyGtSportTelemetryBypass();
-    // ApplyGtSportAdhocNotNilTolerate() disabled: patching `not nil` to succeed
-    // just exposes the *next* nil-derived throw (HObject from h_object.h:262), so
-    // it's whack-a-mole rather than a real fix. Kept in the source for next session
-    // when we can chase the underlying nil-producing HLE.
+    // Enabling the AdHoc not-nil bypass to see if it unblocks rendering.
+    // Prior session noted it exposed a "HObject nil" throw next, but the current
+    // build hits a different next-throw (array-index-of-range) — script flow has
+    // changed enough that it's worth retesting.
+    ApplyGtSportAdhocNotNilTolerate();
+
+    // Diagnostic: int3 at AdHoc unary-operator throw entry. Used once to capture the
+    // operand's class via `procdump64 -b -ma -e 1 -f BREAKPOINT -x ... shadps4.exe ...`
+    // and confirmed the operand is a `10MCodeFrame` (an AdHoc call frame) — meaning
+    // the script does `not <call>` where the call returns no value, leaving its frame
+    // on the value stack. Disabled now; re-enable to re-capture under procdump64.
+    // ApplyGtSportAdhocThrowProbe();
 
     std::filesystem::path patch_dir = Common::FS::GetUserPath(Common::FS::PathType::PatchesDir);
     if (!patch_file.empty()) {
