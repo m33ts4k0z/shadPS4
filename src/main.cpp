@@ -24,12 +24,132 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <cstdio>
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+
+static LONG WINAPI CrashStackTraceHandler(EXCEPTION_POINTERS* ep) {
+    // Write to a fixed file path so we don't depend on stderr / stdout still being usable.
+    FILE* f = std::fopen("C:/Users/ff_be/AppData/Roaming/shadPS4/log/crash_trace.txt", "w");
+    if (!f) {
+        f = stderr;
+    }
+    auto code = ep->ExceptionRecord->ExceptionCode;
+    auto addr = ep->ExceptionRecord->ExceptionAddress;
+    std::fprintf(f, "\n!!! UNHANDLED EXCEPTION 0x%08lX at 0x%p !!!\n",
+                 (unsigned long)code, addr);
+    if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2) {
+        std::fprintf(f, "  Access violation: %s at 0x%p\n",
+                     ep->ExceptionRecord->ExceptionInformation[0] == 0 ? "READ"
+                     : ep->ExceptionRecord->ExceptionInformation[0] == 1 ? "WRITE"
+                     : "EXEC",
+                     (void*)ep->ExceptionRecord->ExceptionInformation[1]);
+    }
+    auto* ctx = ep->ContextRecord;
+#ifdef _M_X64
+    std::fprintf(f, "  Registers:\n");
+    std::fprintf(f, "    RIP=0x%016llX  RSP=0x%016llX  RBP=0x%016llX\n",
+                 ctx->Rip, ctx->Rsp, ctx->Rbp);
+    std::fprintf(f, "    RAX=0x%016llX  RBX=0x%016llX  RCX=0x%016llX  RDX=0x%016llX\n",
+                 ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx);
+    std::fprintf(f, "    RSI=0x%016llX  RDI=0x%016llX  R8 =0x%016llX  R9 =0x%016llX\n",
+                 ctx->Rsi, ctx->Rdi, ctx->R8, ctx->R9);
+    std::fprintf(f, "    R10=0x%016llX  R11=0x%016llX  R12=0x%016llX  R13=0x%016llX\n",
+                 ctx->R10, ctx->R11, ctx->R12, ctx->R13);
+    std::fprintf(f, "    R14=0x%016llX  R15=0x%016llX\n",
+                 ctx->R14, ctx->R15);
+    // Try to dump 32 bytes of instruction stream at RIP. Wrap in __try in case it faults.
+    std::fprintf(f, "  Instruction bytes at RIP:");
+    __try {
+        const auto* ip = reinterpret_cast<const unsigned char*>(ctx->Rip);
+        for (int i = 0; i < 32; i++) {
+            std::fprintf(f, " %02X", ip[i]);
+        }
+        std::fprintf(f, "\n");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        std::fprintf(f, " <fault while reading>\n");
+    }
+#endif
+    HANDLE proc = GetCurrentProcess();
+    HANDLE thr = GetCurrentThread();
+    static bool sym_init = false;
+    if (!sym_init) {
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        SymInitialize(proc, nullptr, TRUE);
+        sym_init = true;
+    }
+    // Proper StackWalk64 using the saved CONTEXT (host context at fault time).
+    CONTEXT walk_ctx = *ctx;
+    STACKFRAME64 frame{};
+    frame.AddrPC.Mode = AddrModeFlat;
+    frame.AddrFrame.Mode = AddrModeFlat;
+    frame.AddrStack.Mode = AddrModeFlat;
+#ifdef _M_X64
+    frame.AddrPC.Offset = ctx->Rip;
+    frame.AddrFrame.Offset = ctx->Rbp;
+    frame.AddrStack.Offset = ctx->Rsp;
+    DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+#else
+    DWORD machine = IMAGE_FILE_MACHINE_I386;
+#endif
+    char sym_buf[sizeof(SYMBOL_INFO) + 256];
+    auto* sym = reinterpret_cast<SYMBOL_INFO*>(sym_buf);
+    sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+    sym->MaxNameLen = 255;
+    IMAGEHLP_LINE64 line{};
+    line.SizeOfStruct = sizeof(line);
+    std::fprintf(f, "  Stack (StackWalk64 from fault context):\n");
+    for (int i = 0; i < 64; i++) {
+        if (!StackWalk64(machine, proc, thr, &frame, &walk_ctx, nullptr,
+                         SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
+            break;
+        }
+        DWORD64 pc = frame.AddrPC.Offset;
+        if (!pc) break;
+        DWORD64 disp = 0;
+        DWORD line_disp = 0;
+        const char* name = "<unknown>";
+        const char* file = "";
+        DWORD line_no = 0;
+        if (SymFromAddr(proc, pc, &disp, sym)) {
+            name = sym->Name;
+        }
+        if (SymGetLineFromAddr64(proc, pc, &line_disp, &line)) {
+            file = line.FileName;
+            line_no = line.LineNumber;
+        }
+        std::fprintf(f, "    [%2d] 0x%016llX  %s+0x%llX  (%s:%lu)\n",
+                     i, pc, name, disp, file, line_no);
+    }
+    std::fflush(f);
+    if (f != stderr) {
+        std::fclose(f);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Vectored handler so we run BEFORE shadps4's signals.cpp VEH chain decides to swallow.
+static LONG WINAPI CrashVectoredHandler(EXCEPTION_POINTERS* ep) {
+    auto code = ep->ExceptionRecord->ExceptionCode;
+    // Only handle hard crashes; ignore guest-tracked access violations that shadps4 will resolve.
+    if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
+        code == EXCEPTION_STACK_OVERFLOW) {
+        static int dumped = 0;
+        if (dumped++ == 0) {
+            CrashStackTraceHandler(ep);
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 #endif
 #include <core/user_settings.h>
 
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+    // Keep only the last-resort SEH filter — vectored handler was intercepting and preventing
+    // shadps4's own VEH chain from running the cpu_patches handler.
+    SetUnhandledExceptionFilter(CrashStackTraceHandler);
 #endif
 
     CLI::App app{"shadPS4 Emulator CLI"};
