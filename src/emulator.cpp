@@ -486,23 +486,51 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
             "libSceJson.sprx",
             "libSceJson2.sprx",
         };
+        // Two-phase preload to fix cross-sprx STT_OBJECT imports for the FreeType
+        // chain (and any other set of sprx that export into the same logical
+        // library). Phase 1: LoadModule every preload candidate so all their
+        // .data/.bss exports are mapped into memory, but DO NOT run their _init
+        // yet. Phase 2: RelocateAllImports — every sprx's import GOT entries now
+        // see every other sprx's exports. Phase 3: Start each module's _init
+        // in declared order, so when libSceFreeTypeOt's _init reads
+        // `autofit_module_class` it gets libSceFreeTypeHinter's real struct,
+        // not an AeroLib stub. Without this split, _init runs immediately after
+        // each LoadModule, so e.g. Ot's _init captures the still-stubbed
+        // address of autofit_module_class into its private state and the later
+        // RelocateAllImports rebind never reaches the cached copy. The visible
+        // symptom of that failure is GT Sport rendering every glyph as
+        // .notdef (tofu boxes).
+        std::vector<s32> preloaded_handles;
         for (const char* mod : kSysModulePreloadOrder) {
             const auto path = sys_modules_path / mod;
-            if (std::filesystem::exists(path)) {
-                s32 start_result = 0;
-                s32 handle = linker->LoadAndStartModule(path, 0, nullptr, &start_result);
-                if (handle >= 0) {
-                    LOG_INFO(Loader, "Pre-loaded {} (handle={}, start_result={:#x})", mod,
-                             handle, start_result);
-                } else {
-                    LOG_WARNING(Loader, "Failed to pre-load {}: handle={}", mod, handle);
-                }
-            } else {
+            if (!std::filesystem::exists(path)) {
                 LOG_WARNING(Loader, "{} not found in {}", mod,
                             Common::FS::PathToUTF8String(sys_modules_path));
+                continue;
             }
+            const s32 handle = linker->LoadModule(path, true);
+            if (handle < 0) {
+                LOG_WARNING(Loader, "Failed to pre-load (load phase) {}: handle={}", mod, handle);
+                continue;
+            }
+            LOG_INFO(Loader, "Pre-loaded (load phase) {} (handle={})", mod, handle);
+            preloaded_handles.push_back(handle);
         }
         linker->RelocateAllImports();
+        for (const s32 handle : preloaded_handles) {
+            auto* module = linker->GetModule(handle);
+            if (!module) {
+                continue;
+            }
+            if (module->tls.image_size != 0) {
+                linker->AdvanceGenerationCounter();
+            }
+            auto* param = module->GetProcParam<OrbisProcParam*>();
+            ASSERT_MSG(!param || param->size >= 0x18, "Invalid module param size: {}", param->size);
+            const s32 start_result = module->Start(0, nullptr, param);
+            LOG_INFO(Loader, "Started preloaded module (handle={}, start_result={:#x})", handle,
+                     start_result);
+        }
     }
 
 #ifdef ENABLE_DISCORD_RPC

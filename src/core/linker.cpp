@@ -341,10 +341,22 @@ bool Linker::Resolve(const std::string& name, Loader::SymbolType sym_type, Modul
         return true;
     }
 
-    // Check if it an export function
-    const auto* p = FindExportedModule(*module, *library);
-    if (p && p->export_sym.GetSize() > 0) {
-        record = p->export_sym.FindSymbol(sr);
+    // Check if it an export function. NOTE: more than one preloaded sprx may
+    // declare itself as exporter of the same logical (library, module) tuple
+    // — e.g. libSceFreeTypeOt.sprx and libSceFreeTypeHinter.sprx both export
+    // into "libSceFreeType v1" but only Hinter has `autofit_module_class`.
+    // Walk ALL matching modules and return the first one whose export_sym
+    // actually contains the requested NID; only fall through to AeroLib once
+    // every matching module has been checked.
+    for (const auto& candidate : m_modules) {
+        if (!std::ranges::contains(candidate->GetExportLibs(), *library) ||
+            !std::ranges::contains(candidate->GetExportModules(), *module)) {
+            continue;
+        }
+        if (candidate->export_sym.GetSize() == 0) {
+            continue;
+        }
+        record = candidate->export_sym.FindSymbol(sr);
         if (record) {
             *return_info = *record;
             return true;
