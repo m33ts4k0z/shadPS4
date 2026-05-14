@@ -153,6 +153,18 @@ s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
             }
             // Create a file if it doesn't exist
             Common::FS::IOFile out(file->m_host_name, Common::FS::FileAccessMode::Create);
+        } else {
+            // GT Sport CUSA02168 regression: pre-bisect-baseline (Jul 2025) behaviour
+            // opened with FileAccessMode::Write which at that time used "wb" mode
+            // (truncating). PR #3255 made truncation conditional on !exists, and
+            // PR #3360 (Nov 2025) then redefined FileAccessMode::Write itself to
+            // use "r+b" (no truncate) — so the bisect-identified fix of "use
+            // Write here" silently became a no-op in current code. Use Create
+            // (which is now the "wb" path) to actually truncate, matching the
+            // pre-bisect semantics that GT Sport's boot script depends on.
+            if (!read_only) {
+                Common::FS::IOFile out(file->m_host_name, Common::FS::FileAccessMode::Create);
+            }
         }
     } else if (!exists) {
         // If we're not creating a file, and it doesn't exist, return ENOENT

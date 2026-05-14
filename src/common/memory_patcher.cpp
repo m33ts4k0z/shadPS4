@@ -303,6 +303,50 @@ static void ApplyGtSportAdhocThrowProbe() {
              fmt::ptr(trap_at));
 }
 
+// GT Sport (CUSA02168) DIAGNOSTIC PROBE 2: int3 at the entry of
+// `HObject::throw_nil_as_helper(this, line)` at runtime VA 0x801796eb0. This helper
+// formats "nil object cannot be used as %s." with the type name and then calls
+// `throw_adhoc_error(this, line, msg)` -- which never returns. We want to identify
+// WHICH of the ~600 call sites near the AdHoc dispatcher fires first for our boot
+// cascade, so we can NOP that one `test/jne/lea/lea/mov esi,line/call` site rather
+// than try to bypass the universal nil-check (which would just crash the next deref).
+//
+// On int3 trap the procdump-captured context has the caller's `e8 disp32 call`
+// return-address sitting at `[rsp+0]` (the int3 fires BEFORE the function's
+// `push rbp` prologue, so rsp still points at the caller's return slot).
+//
+// The signature `4c 8d 7d b0 41 89 f6 48 89 fb` (the arg-setup
+// `lea r15,[rbp-0x50]; mov r14d,esi; mov rbx,rdi`) is unique in eboot text and sits
+// at function_start + 0x16. We back off by 0x16 to reach the `push rbp` byte.
+static void ApplyGtSportAdhocNilHelperProbe() {
+    if (g_game_serial != "CUSA02168") {
+        return;
+    }
+    if (g_eboot_address == 0 || g_eboot_image_size == 0) {
+        return;
+    }
+
+    static constexpr std::array<u8, 10> kSig = {0x4c, 0x8d, 0x7d, 0xb0, 0x41, 0x89, 0xf6,
+                                                0x48, 0x89, 0xfb};
+    const u8* const begin = reinterpret_cast<const u8*>(g_eboot_address);
+    const u8* match = FindSignature(begin, g_eboot_image_size, kSig.data(), kSig.size());
+    if (match == nullptr) {
+        LOG_WARNING(Loader, "GT Sport adhoc nil-helper probe: signature not found");
+        return;
+    }
+    u8* const fn_start = const_cast<u8*>(match) - 0x16;
+    static constexpr std::array<u8, 1> kInt3 = {0xcc};
+    if (!WriteEbootBytes(fn_start, kInt3.data(), kInt3.size())) {
+        LOG_ERROR(Loader, "GT Sport adhoc nil-helper probe: WriteProcessMemory failed at {}",
+                  fmt::ptr(fn_start));
+        return;
+    }
+    LOG_INFO(Loader,
+             "GT Sport adhoc nil-helper probe: int3 armed at {} "
+             "(HObject::throw_nil_as_helper entry). On trap, [rsp+0] = caller of throw.",
+             fmt::ptr(fn_start));
+}
+
 // GT Sport (CUSA02168): even after the analytics-report crash is bypassed, the AdHoc
 // VM is still throwing `invalid operand ((nil)) to unary operator __not__` at the
 // post-boot listener `ProductBootScreen.ad:99`. The throw site is the AdHoc VM's
@@ -339,19 +383,66 @@ static void ApplyGtSportAdhocNotNilTolerate() {
              fmt::ptr(patch_at));
 }
 
+// GT Sport (CUSA02168): bypass the listener-dispatch h_object.h:262 nil throw at
+// AdHoc interpreter VA 0x80179bb23. The opcode pops an HObject, dies on nil. Convert
+// `je 0x80179d0a1` (6 bytes `0f 84 78 15 00 00`) into
+// `jmp 0x80179b9cc` + nop (5+1 bytes `e9 a4 fe ff ff 90`) so a nil operand falls
+// back to the main dispatch loop instead of throwing.
+//
+// Signature: `mov rbx,[rdx+rsi*8+0x18]; test rbx,rbx; je 0x80179d0a1` (14 bytes).
+// Patch site is at sig+8 (the `0f 84` byte of the je).
+//
+// New rel32 for the jmp: 0x80179b9cc - (0x80179bb23 + 5) = -0x15c => bytes
+// `a4 fe ff ff`. Final 6 bytes: `e9 a4 fe ff ff 90`.
+static void ApplyGtSportAdhocNilOnNilContinue() {
+    if (g_game_serial != "CUSA02168") {
+        return;
+    }
+    if (g_eboot_address == 0 || g_eboot_image_size == 0) {
+        return;
+    }
+
+    static constexpr std::array<u8, 14> kSig = {0x48, 0x8b, 0x5c, 0xf2, 0x18, 0x48, 0x85,
+                                                0xdb, 0x0f, 0x84, 0x78, 0x15, 0x00, 0x00};
+    const u8* const begin = reinterpret_cast<const u8*>(g_eboot_address);
+    const u8* match = FindSignature(begin, g_eboot_image_size, kSig.data(), kSig.size());
+    if (match == nullptr) {
+        LOG_WARNING(Loader, "GT Sport adhoc nil-on-nil-continue: signature not found");
+        return;
+    }
+    u8* const patch_at = const_cast<u8*>(match) + 8;  // start of `je rel32` (0f 84 ..)
+    static constexpr std::array<u8, 6> kJmpNop = {0xe9, 0xa4, 0xfe, 0xff, 0xff, 0x90};
+    if (!WriteEbootBytes(patch_at, kJmpNop.data(), kJmpNop.size())) {
+        LOG_ERROR(Loader,
+                  "GT Sport adhoc nil-on-nil-continue: WriteProcessMemory failed at {}",
+                  fmt::ptr(patch_at));
+        return;
+    }
+    LOG_INFO(Loader,
+             "GT Sport adhoc nil-on-nil-continue: patched je throw -> jmp dispatch at {}",
+             fmt::ptr(patch_at));
+}
+
 void OnGameLoaded() {
     ApplyGtSportTelemetryBypass();
-    // Enabling the AdHoc not-nil bypass to see if it unblocks rendering.
-    // Prior session noted it exposed a "HObject nil" throw next, but the current
-    // build hits a different next-throw (array-index-of-range) — script flow has
-    // changed enough that it's worth retesting.
+    // The file_system.cpp truncate-on-O_CREAT fix restored the boot script's
+    // temp-file write semantics and removed the FIRST throw (operand
+    // MCodeFrame at PBS:99). Script now reaches onBootSequenceDone::Begin
+    // and continues, but the SAME call site (PBS:99 -> ListenerManager.ad:40
+    // -> SequenceUtil2.ad:373 -> m_unary_operator.cpp:50) throws again with
+    // operand=nil for the next listener. This bypass patches the `je
+    // throw_unsupported_operand` instruction itself, so it skips the throw
+    // regardless of whether the operand is MCodeFrame or nil — keep it on.
     ApplyGtSportAdhocNotNilTolerate();
-
-    // Diagnostic: int3 at AdHoc unary-operator throw entry. Used once to capture the
-    // operand's class via `procdump64 -b -ma -e 1 -f BREAKPOINT -x ... shadps4.exe ...`
-    // and confirmed the operand is a `10MCodeFrame` (an AdHoc call frame) — meaning
-    // the script does `not <call>` where the call returns no value, leaving its frame
-    // on the value stack. Disabled now; re-enable to re-capture under procdump64.
+    // ApplyGtSportAdhocNilOnNilContinue() crashes the game very early (process
+    // exits during font loading with only ~2 flips). The patched site at
+    // 0x80179bb23 must also be hit by legitimate (non-listener) code paths
+    // and the `jmp dispatch_loop` corrupts state for those callers. Keep it
+    // disabled; need to find a more narrowly-targeted fix.
+    // ApplyGtSportAdhocNilOnNilContinue();
+    // Probes no longer needed — root cause is in the script's __not__-on-nil
+    // call, and the bypasses above handle it.
+    // ApplyGtSportAdhocNilHelperProbe();
     // ApplyGtSportAdhocThrowProbe();
 
     std::filesystem::path patch_dir = Common::FS::GetUserPath(Common::FS::PathType::PatchesDir);

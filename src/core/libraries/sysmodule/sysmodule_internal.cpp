@@ -213,7 +213,12 @@ s32 loadModuleInternal(s32 index, s32 argc, const void* argv, s32* res_out) {
         constexpr auto ModulesToLoad = std::to_array<Core::SysModules>(
             {{"libSceNgs2.sprx", &Libraries::Ngs2::RegisterLib},
              {"libSceUlt.sprx", nullptr},
-             {"libSceRtc.sprx", &Libraries::Rtc::RegisterLib},
+             // Pass nullptr instead of &Libraries::Rtc::RegisterLib so the real
+             // libSceRtc.sprx exports win over the HLE shim. GT Sport v1.69's
+             // boot listener relies on real-hardware Rtc semantics; the HLE
+             // (added in PR #3330, 5b46216b) replies in ways that cause the
+             // boot listener to return nil -> AdHoc throws at ProductBootScreen.ad:99.
+             {"libSceRtc.sprx", nullptr},
              {"libSceJpegDec.sprx", nullptr},
              {"libSceJpegEnc.sprx", &Libraries::JpegEnc::RegisterLib},
              {"libScePngEnc.sprx", &Libraries::PngEnc::RegisterLib},
