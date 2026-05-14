@@ -101,24 +101,20 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     Libraries::SysModule::RegisterLib(sym);
     Libraries::Posix::RegisterLib(sym);
     Libraries::AudioIn::RegisterLib(sym);
-    // Libraries that existed in v0.10.0 - keep registered:
+    Libraries::Np::NpCommerce::RegisterLib(sym);
     Libraries::Np::NpCommon::RegisterLib(sym);
     Libraries::Np::NpManager::RegisterLib(sym);
+    Libraries::Np::NpMatching2::RegisterLib(sym);
     Libraries::Np::NpScore::RegisterLib(sym);
     Libraries::Np::NpTrophy::RegisterLib(sym);
     Libraries::Np::NpWebApi::RegisterLib(sym);
+    Libraries::Np::NpWebApi2::RegisterLib(sym);
+    Libraries::Np::NpProfileDialog::RegisterLib(sym);
+    Libraries::Np::NpSnsFacebookDialog::RegisterLib(sym);
     Libraries::Np::NpAuth::RegisterLib(sym);
     Libraries::Np::NpParty::RegisterLib(sym);
-    // GT Sport v1.69 bisect experiment: these Np libraries were added AFTER v0.10.0.
-    // v0.10.0 didn't register them so their NIDs fell through to aerolib zero-stubs.
-    // Re-enable individually if/when behavior is confirmed correct for offline mode.
-    // Libraries::Np::NpCommerce::RegisterLib(sym);
-    // Libraries::Np::NpMatching2::RegisterLib(sym);
-    // Libraries::Np::NpWebApi2::RegisterLib(sym);
-    // Libraries::Np::NpProfileDialog::RegisterLib(sym);
-    // Libraries::Np::NpSnsFacebookDialog::RegisterLib(sym);
-    // Libraries::Np::NpPartner::RegisterLib(sym);
-    // Libraries::Np::NpTus::RegisterLib(sym);
+    Libraries::Np::NpPartner::RegisterLib(sym);
+    Libraries::Np::NpTus::RegisterLib(sym);
     Libraries::ScreenShot::RegisterLib(sym);
     Libraries::AppContent::RegisterLib(sym);
     Libraries::PngDec::RegisterLib(sym);
@@ -169,10 +165,8 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     // Libraries::Ngs2::RegisterLib(sym);
     Libraries::VideoRecording::RegisterLib(sym);
 
-    // Pre-v0.11.0 (PR #3540) shadps4 always registered libSceSsl HLE. Re-enabling
-    // because GT Sport v1.69's boot script seems to import libSceSsl NIDs that
-    // need dedicated stubs (incrementing id, ORBIS_OK) rather than aerolib zero-stubs.
-    Libraries::Ssl::RegisterLib(sym);
+    // Loading libSceSsl is locked behind a title workaround that currently applies to nothing.
+    // Libraries::Ssl::RegisterLib(sym);
 }
 
 } // namespace Libraries

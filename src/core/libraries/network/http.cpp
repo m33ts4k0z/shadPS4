@@ -149,11 +149,7 @@ int PS4_SYSV_ABI sceHttpCreateRequestWithURL2() {
 
 int PS4_SYSV_ABI sceHttpCreateTemplate() {
     LOG_ERROR(Lib_Http, "(STUBBED) called");
-    // Real PS4 returns a positive templateId. Returning 0 (ORBIS_OK) is ambiguous --
-    // GT Sport v1.69's PDISTD::HTTP::HttpClient treats 0 as "no template" and fails
-    // downstream, which propagates as a nil HObject in the AdHoc boot listener.
-    static int id = 0;
-    return ++id;
+    return ORBIS_OK;
 }
 
 int PS4_SYSV_ABI sceHttpDbgEnableProfile() {

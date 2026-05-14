@@ -485,11 +485,6 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
             "libSceNgs2.sprx",
             "libSceJson.sprx",
             "libSceJson2.sprx",
-            // libSceRtc was auto-loaded in v0.10.0 but PR #3330 (5b46216b) moved
-            // it to fully-HLE in v0.11.0+. GT Sport v1.69's boot listener manager
-            // relies on real Sony Rtc behaviour -- without the real sprx the listener
-            // returns nil and the AdHoc engine throws on ProductBootScreen.ad:99.
-            "libSceRtc.sprx",
         };
         for (const char* mod : kSysModulePreloadOrder) {
             const auto path = sys_modules_path / mod;

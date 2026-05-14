@@ -425,14 +425,15 @@ static void ApplyGtSportAdhocNilOnNilContinue() {
 
 void OnGameLoaded() {
     ApplyGtSportTelemetryBypass();
-    // The file_system.cpp truncate-on-O_CREAT fix restored the boot script's
-    // temp-file write semantics and removed the FIRST throw (operand
-    // MCodeFrame at PBS:99). Script now reaches onBootSequenceDone::Begin
-    // and continues, but the SAME call site (PBS:99 -> ListenerManager.ad:40
-    // -> SequenceUtil2.ad:373 -> m_unary_operator.cpp:50) throws again with
-    // operand=nil for the next listener. This bypass patches the `je
-    // throw_unsupported_operand` instruction itself, so it skips the throw
-    // regardless of whether the operand is MCodeFrame or nil — keep it on.
+    // Verified load-bearing: even with the file_system.cpp truncate-via-Create
+    // fix, the boot script still throws `invalid operand ((nil)) to unary
+    // operator __not__` at PBS:99 in v0.15.x. The pre-bisect-baseline (Jul
+    // 2025) commit 499451bb doesn't hit this throw, so something further
+    // downstream of the file-truncate semantics also regressed between then
+    // and now. This bypass patches the `je throw_unsupported_operand`
+    // instruction so the `__not__` on nil returns true and the loop
+    // continues, letting the boot reach onBootSequenceDone::End and the
+    // EULA window render.
     ApplyGtSportAdhocNotNilTolerate();
     // ApplyGtSportAdhocNilOnNilContinue() crashes the game very early (process
     // exits during font loading with only ~2 flips). The patched site at
