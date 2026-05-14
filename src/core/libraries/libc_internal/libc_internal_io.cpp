@@ -316,6 +316,48 @@ s32 PS4_SYSV_ABI internal_fseek(OrbisFILE* file, s64 offset, s32 whence) {
     return result;
 }
 
+// libc `ftell`: return current stream position in bytes from the start of the file.
+// Previously this NID (Qazy8LmXTvw) was unregistered, so games linking against
+// libSceLibcInternal hit the aerolib CommonStub which silently returns 0 forever.
+// That breaks any code that records a stream position via ftell to seek back to
+// it later — including the static FreeType in GT Sport / GT7's eboot, whose
+// TrueType/CFF cmap loader uses `ftell` to remember subtable offsets. With
+// ftell always returning 0, FreeType then seeks to offset 0 and parses garbage
+// as the cmap subtable, leaving FT_Get_Char_Index returning 0 (.notdef) for
+// every codepoint — the classic "tofu boxes everywhere" UI symptom.
+//
+// Adjust the raw fd position for any bytes still sitting in the read/write
+// buffers, mirroring the buffered-offset arithmetic in internal__Fspos.
+s64 PS4_SYSV_ABI internal_ftell(OrbisFILE* file) {
+    if (file == nullptr) {
+        *Libraries::Kernel::__Error() = POSIX_EBADF;
+        return -1;
+    }
+    internal__Lockfilelock(file);
+    LOG_TRACE(Lib_LibcInternal, "called, file handle {:#x}", file->_Handle);
+
+    const s64 fd_pos = Libraries::Kernel::posix_lseek(file->_Handle, 0, 1 /* SEEK_CUR */);
+    if (fd_pos < 0) {
+        internal__Unlockfilelock(file);
+        return -1;
+    }
+
+    s64 buffered = 0;
+    if ((file->_Mode & 0x1000) != 0) {
+        const s64 pushback = internal__Nnl(file, file->_Rback, &file->_Cbuf);
+        u8* rsave_ptr = file->_Rsave;
+        if (rsave_ptr == nullptr) {
+            rsave_ptr = file->_Rend;
+        }
+        const s64 read_buf = internal__Nnl(file, file->_Next, rsave_ptr);
+        const s64 write_buf = internal__Nnl(file, file->_Next, file->_WRend);
+        buffered = pushback + read_buf + write_buf;
+    }
+
+    internal__Unlockfilelock(file);
+    return fd_pos - buffered;
+}
+
 s32 PS4_SYSV_ABI internal__Frprep(OrbisFILE* file) {
     if (file->_Rend > file->_Next) {
         return 1;
@@ -471,6 +513,10 @@ void RegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("sQL8D-jio7U", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Fopen);
     LIB_FUNCTION("A+Y3xfrWLLo", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Fspos);
     LIB_FUNCTION("Ss3108pBuZY", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Nnl);
+    // ftell — required by FreeType's TT/CFF cmap loader; absent before this change
+    // and silently returned 0 via aerolib CommonStub, causing GT Sport's text to
+    // render as .notdef tofu boxes.
+    LIB_FUNCTION("Qazy8LmXTvw", "libSceLibcInternal", 1, "libSceLibcInternal", internal_ftell);
     LIB_FUNCTION("9s3P+LCvWP8", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Frprep);
     LIB_FUNCTION("jVDuvE3s5Bs", "libSceLibcInternal", 1, "libSceLibcInternal", internal__Fofree);
     LIB_FUNCTION("vZkmJmvqueY", "libSceLibcInternal", 1, "libSceLibcInternal",
@@ -483,6 +529,14 @@ void ForceRegisterlibSceLibcInternalIo(Core::Loader::SymbolsResolver* sym) {
     // Goal is to be minimally intrusive here to allow LLE for printf/stdout writes.
     LIB_FUNCTION("xeYO4u7uyJ0", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fopen);
     LIB_FUNCTION("rQFVBXp-Cxg", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fseek);
+    // ftell — required by static FreeType's TT/CFF cmap loader. Without this HLE
+    // the NID falls through to aerolib's CommonStub which silently returns 0,
+    // so FreeType records "0" for every cmap subtable offset and later seeks
+    // back to garbage. Result: FT_Get_Char_Index returns 0 (.notdef) for every
+    // codepoint and the whole UI renders as tofu rectangles. Registered here in
+    // ForceRegister so it wins even when libSceLibcInternal.sprx is not loaded
+    // as LLE.
+    LIB_FUNCTION("Qazy8LmXTvw", "libSceLibcInternal", 1, "libSceLibcInternal", internal_ftell);
     LIB_FUNCTION("lbB+UlZqVG0", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fread);
     LIB_FUNCTION("uodLYyUip20", "libSceLibcInternal", 1, "libSceLibcInternal", internal_fclose);
 }

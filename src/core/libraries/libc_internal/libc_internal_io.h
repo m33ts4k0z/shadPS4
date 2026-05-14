@@ -89,6 +89,7 @@ s64 PS4_SYSV_ABI internal__Nnl(OrbisFILE* file, u8* val1, u8* val2);
 s32 PS4_SYSV_ABI internal__Fspos(OrbisFILE* file, Orbisfpos_t* file_pos, s64 offset, s32 whence);
 s32 PS4_SYSV_ABI internal_fflush(OrbisFILE* file);
 s32 PS4_SYSV_ABI internal_fseek(OrbisFILE* file, s64 offset, s32 whence);
+s64 PS4_SYSV_ABI internal_ftell(OrbisFILE* file);
 s32 PS4_SYSV_ABI internal__Frprep(OrbisFILE* file);
 u64 PS4_SYSV_ABI internal_fread(char* ptr, u64 size, u64 nmemb, OrbisFILE* file);
 s32 PS4_SYSV_ABI internal_fclose(OrbisFILE* file);
