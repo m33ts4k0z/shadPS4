@@ -63,8 +63,14 @@ const char* PS4_SYSV_ABI internal_strchr(const char* str, int c) {
 void RegisterlibSceLibcInternalStr(Core::Loader::SymbolsResolver* sym) {
     LIB_FUNCTION("5Xa2ACNECdo", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strcpy_s);
     LIB_FUNCTION("K+gcnFFJKVc", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strcat_s);
-    LIB_FUNCTION("aesyjrHVWy4", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strcmp);
-    LIB_FUNCTION("Ovb2dSJOAuE", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strncmp);
+    // Fix swapped NIDs: aerolib.inl confirms Ovb2dSJOAuE = strcmp and
+    // aesyjrHVWy4 = strncmp. Previously these were registered backwards which
+    // made every Sony-sprx call to strcmp execute internal_strncmp (with garbage
+    // in rdx for the size parameter), causing nondeterministic comparison
+    // failures inside the Sony FreeType / Font sprx and ultimately rendering
+    // every codepoint as the .notdef glyph (GT Sport CUSA02168 tofu-text).
+    LIB_FUNCTION("Ovb2dSJOAuE", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strcmp);
+    LIB_FUNCTION("aesyjrHVWy4", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strncmp);
     LIB_FUNCTION("j4ViWNHEgww", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strlen);
     LIB_FUNCTION("6sJWiWSRuqk", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strncpy);
     LIB_FUNCTION("YNzNkJzYqEg", "libSceLibcInternal", 1, "libSceLibcInternal", internal_strncpy_s);
