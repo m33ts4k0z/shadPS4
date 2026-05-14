@@ -14,6 +14,8 @@
 #include "core/libraries/content_export/content_export.h"
 #include "core/libraries/device_service/device_service.h"
 #include "core/libraries/disc_map/disc_map.h"
+#include "core/libraries/font/font.h"
+#include "core/libraries/font/fontft.h"
 #include "core/libraries/game_live_streaming/gamelivestreaming.h"
 #include "core/libraries/gnmdriver/gnmdriver.h"
 #include "core/libraries/hmd/hmd.h"
@@ -164,6 +166,15 @@ void InitHLELibs(Core::Loader::SymbolsResolver* sym) {
     // libSceNgs2.sprx (see emulator.cpp preload list); skip HLE registration.
     // Libraries::Ngs2::RegisterLib(sym);
     Libraries::VideoRecording::RegisterLib(sym);
+
+    // PR #3772 (w1naenator/fontlib): full HLE implementation of libSceFont and
+    // libSceFontFt that reads system OTF/TTF files directly. Required to render
+    // text in games (GT Sport, DRIVECLUB, etc.) that previously got placeholder
+    // notdef rectangles because the LLE sprx chain's internal state didn't
+    // initialise correctly. HLE wins over the preloaded sprx exports due to
+    // linker.cpp's HLE-first lookup at Resolve().
+    Libraries::Font::RegisterlibSceFont(sym);
+    Libraries::FontFt::RegisterlibSceFontFt(sym);
 
     // Loading libSceSsl is locked behind a title workaround that currently applies to nothing.
     // Libraries::Ssl::RegisterLib(sym);
