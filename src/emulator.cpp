@@ -472,15 +472,12 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         const auto sys_modules_path = EmulatorSettings.GetSysModulesDir();
         // Order matters: dependencies first. FreeType chain before Font modules.
         // libSceNgs2 is independent — appended at the end.
+        // Note: with the w1naenator/fontlib HLE registered, the LLE libSceFont,
+        // libSceFontFt and libSceFreeType chain are intentionally NOT preloaded.
+        // PR #3772 README explicitly says to remove them from sys_modules so the
+        // HLE wins cleanly; preloading them alongside the HLE has been observed
+        // to leave glyphs as .notdef rectangles on GT Sport CUSA02168 v1.69.
         static constexpr std::array kSysModulePreloadOrder = {
-            "libfreetype.sprx",
-            "libSceFreeTypeOt.sprx",
-            "libSceFreeTypeHinter.sprx",
-            "libSceFreeTypeOl.sprx",
-            "libSceFreeTypeOptOl.sprx",
-            "libSceFreeTypeSubFunc.sprx",
-            "libSceFont.sprx",
-            "libSceFontFt.sprx",
             "libSceFontGs.sprx",
             "libSceNgs2.sprx",
             "libSceJson.sprx",
