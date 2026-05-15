@@ -283,11 +283,11 @@ int PS4_SYSV_ABI sceAppContentGetRegion() {
 
 int PS4_SYSV_ABI sceAppContentInitialize(const OrbisAppContentInitParam* initParam,
                                          OrbisAppContentBootParam* bootParam) {
-    if (sdk_ver >= Common::ElfInfo::FW_15 && is_initialized) {
-        LOG_ERROR(Lib_AppContent, "Already initialized");
-        return ORBIS_APP_CONTENT_ERROR_BUSY;
-    }
-
+    // Upstream PR #4419 added a double-init check that returns BUSY for SDK >= FW_15.
+    // This breaks GT Sport CUSA02168 (SDK 5.05) on Windows: the boot script calls
+    // sceAppContentInitialize twice, the second BUSY return becomes a nil HObject in
+    // AdHoc and throws at ProductBootScreen.ad:99. Real PS4 behaviour appears to be
+    // idempotent — re-initialize without error. Restore that pre-#4419 behaviour.
     LOG_WARNING(Lib_AppContent, "(DUMMY) called");
     is_initialized = true;
     auto* param_sfo = Common::Singleton<PSF>::Instance();

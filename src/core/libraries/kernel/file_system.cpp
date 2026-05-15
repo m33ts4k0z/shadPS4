@@ -153,6 +153,9 @@ s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
             }
             // Create a file if it doesn't exist
             Common::FS::IOFile out(file->m_host_name, Common::FS::FileAccessMode::Create);
+        } else if (!read_only) {
+            // GT Sport boot fix (over-aggressive truncate)
+            Common::FS::IOFile out(file->m_host_name, Common::FS::FileAccessMode::Create);
         }
     } else if (!exists) {
         // If we're not creating a file, and it doesn't exist, return ENOENT
@@ -216,7 +219,17 @@ s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
         } else if (truncate) {
             // Open the file as read-write so we can truncate regardless of flags.
             // Since open starts by closing the file, this won't interfere with later open calls.
-            e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::ReadWrite);
+            //
+            // Use ShareReadWrite so concurrent opens from other game threads/handles don't
+            // hit EACCES on Windows. On Linux fopen has no sharing concept; the default
+            // ShareReadOnly (_SH_DENYWR on Windows) makes parallel r+b opens of the same
+            // path fail with errno=13, which on PS4 looks like a missing file and triggers
+            // downstream "nil HObject" AdHoc throws (e.g. GT Sport CUSA02168 boot at
+            // ProductBootScreen.ad:99). The PS4 kernel does not share-lock open files, so
+            // matching that behaviour is correct.
+            e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::ReadWrite,
+                             Common::FS::FileType::BinaryFile,
+                             Common::FS::FileShareFlag::ShareReadWrite);
             if (e == 0) {
                 // If the file was opened successfully, reduce size to 0
                 file->f.SetSize(0);
@@ -225,7 +238,9 @@ s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
 
         if (read) {
             // Open exclusively for reading
-            e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::Read);
+            e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::Read,
+                             Common::FS::FileType::BinaryFile,
+                             Common::FS::FileShareFlag::ShareReadWrite);
         } else if (read_only) {
             // Can't open files with write/read-write access in a read only directory
             h->DeleteHandle(handle);
@@ -235,19 +250,27 @@ s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
         } else if (write) {
             if (append) {
                 // Open exclusively for appending
-                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::Append);
+                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::Append,
+                                 Common::FS::FileType::BinaryFile,
+                                 Common::FS::FileShareFlag::ShareReadWrite);
             } else {
                 // Open exclusively for writing
-                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::Write);
+                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::Write,
+                                 Common::FS::FileType::BinaryFile,
+                                 Common::FS::FileShareFlag::ShareReadWrite);
             }
         } else if (rdwr) {
             // Read and write
             if (append) {
                 // Open for reading and appending
-                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::ReadAppend);
+                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::ReadAppend,
+                                 Common::FS::FileType::BinaryFile,
+                                 Common::FS::FileShareFlag::ShareReadWrite);
             } else {
                 // Open for reading and writing
-                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::ReadWrite);
+                e = file->f.Open(file->m_host_name, Common::FS::FileAccessMode::ReadWrite,
+                                 Common::FS::FileType::BinaryFile,
+                                 Common::FS::FileShareFlag::ShareReadWrite);
             }
         }
     }
