@@ -124,6 +124,19 @@ public:
         return attachment_feedback_loop;
     }
 
+    /// Returns whether VK_NV_device_diagnostic_checkpoints is enabled. When true the rasterizer
+    /// emits a checkpoint marker per draw so the queue's last-completed checkpoint can be
+    /// queried on device-lost to identify the faulting draw.
+    bool IsDeviceDiagnosticCheckpointsSupported() const {
+        return nv_diagnostic_checkpoints;
+    }
+
+    /// Returns whether VK_EXT_device_fault is enabled. When true, on device-lost we can query
+    /// `vkGetDeviceFaultInfoEXT` to retrieve fault VA / fault type / vendor binary data.
+    bool IsDeviceFaultSupported() const {
+        return ext_device_fault;
+    }
+
     /// Returns true when VK_EXT_custom_border_color is supported
     bool IsCustomBorderColorSupported() const {
         return custom_border_color;
@@ -520,6 +533,8 @@ private:
     bool portability_subset{};
     bool maintenance_8{};
     bool attachment_feedback_loop{};
+    bool nv_diagnostic_checkpoints{};
+    bool ext_device_fault{};
     bool image_2d_view_of_3d{};
     bool supports_memory_budget{};
     bool supports_block_texel_view{};

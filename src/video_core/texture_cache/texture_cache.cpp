@@ -69,6 +69,25 @@ ImageId TextureCache::GetNullImage(const vk::Format format) {
     info.type = AmdGpu::ImageType::Color2D;
     info.tile_mode = AmdGpu::TileMode::Thin1DThin;
     info.num_bits = 32;
+    // Classify depth/stencil null images correctly so they're created with the right
+    // aspect mask + usage flags. Without this, a null D32Sfloat would be classified
+    // as a color image (default), the image would be created with eColorAttachment usage
+    // (which D32Sfloat doesn't support) and views would be created with eColor aspect on
+    // a depth-only format -- a Vulkan spec violation.
+    switch (format) {
+    case vk::Format::eD32Sfloat:
+    case vk::Format::eD16Unorm:
+        info.props.is_depth = true;
+        break;
+    case vk::Format::eD32SfloatS8Uint:
+    case vk::Format::eD24UnormS8Uint:
+    case vk::Format::eD16UnormS8Uint:
+        info.props.is_depth = true;
+        info.props.has_stencil = true;
+        break;
+    default:
+        break;
+    }
     info.UpdateSize();
 
     const ImageId null_id =

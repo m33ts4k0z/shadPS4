@@ -21,6 +21,13 @@ void EmitBarrier(EmitContext& ctx) {
     spv::Scope memory;
     spv::MemorySemanticsMask memory_semantics;
     if (ctx.l_stage == Shader::LogicalStage::TessellationControl) {
+        // Per GLSL450 memory model + SPIR-V spec VUID-StandaloneSpirv-ExecutionModel-07320,
+        // TessellationControl barriers CANNOT use Workgroup memory scope. The standard
+        // glslang-emitted form is execution=Workgroup, memory=Invocation, semantics=None —
+        // an execution-only barrier where TCS output visibility is guaranteed implicitly by
+        // the implementation (TCS outputs become globally visible at end-of-shader anyway).
+        // (Enabling `VulkanMemoryModelKHR` would let us use Workgroup+OutputMemory but that's
+        // a bigger change.)
         memory = spv::Scope::Invocation;
         memory_semantics = spv::MemorySemanticsMask::MaskNone;
     } else {

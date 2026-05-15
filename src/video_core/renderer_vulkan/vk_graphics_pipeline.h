@@ -100,6 +100,13 @@ public:
         return key;
     }
 
+    /// Stable hash of this pipeline. Used as the marker for VK_NV_device_diagnostic_checkpoints
+    /// so the queue's last-completed checkpoint can be cross-referenced to the
+    /// "Compiling graphics pipeline 0x...." log lines.
+    u64 GetPipelineHash() const {
+        return pipeline_hash;
+    }
+
     /// Gets the attributes and bindings for vertex inputs.
     template <typename Attribute, typename Binding>
     void GetVertexInputs(VertexInputs<Attribute>& attributes, VertexInputs<Binding>& bindings,
@@ -112,6 +119,7 @@ private:
 
 private:
     GraphicsPipelineKey key;
+    u64 pipeline_hash{};
     std::optional<const Shader::Gcn::FetchShaderData> fetch_shader{};
 };
 

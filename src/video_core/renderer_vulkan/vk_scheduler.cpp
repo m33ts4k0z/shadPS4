@@ -378,9 +378,14 @@ void DynamicState::Commit(const Instance& instance, const vk::CommandBuffer& cmd
     }
     if (dirty_state.feedback_loop_enabled && instance.IsAttachmentFeedbackLoopLayoutSupported()) {
         dirty_state.feedback_loop_enabled = false;
-        cmdbuf.setAttachmentFeedbackLoopEnableEXT(feedback_loop_enabled
-                                                      ? vk::ImageAspectFlagBits::eColor
-                                                      : vk::ImageAspectFlagBits::eNone);
+        // Include depth + stencil aspects too so depth-stencil feedback loops (e.g. sampling
+        // the depth buffer while it is bound as the depth attachment) are allowed by the layer.
+        const vk::ImageAspectFlags aspects =
+            feedback_loop_enabled
+                ? (vk::ImageAspectFlagBits::eColor | vk::ImageAspectFlagBits::eDepth |
+                   vk::ImageAspectFlagBits::eStencil)
+                : vk::ImageAspectFlags{vk::ImageAspectFlagBits::eNone};
+        cmdbuf.setAttachmentFeedbackLoopEnableEXT(aspects);
     }
 }
 

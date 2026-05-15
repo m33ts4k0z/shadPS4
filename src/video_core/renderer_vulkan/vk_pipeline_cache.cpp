@@ -126,6 +126,11 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(Stage stage, LogicalS
             info.es_vs_info.tess_type = regs.tess_config.type;
             info.es_vs_info.tess_topology = regs.tess_config.topology;
             info.es_vs_info.tess_partitioning = regs.tess_config.partitioning;
+            // TES input array size must match HS OutputVertices to avoid driver
+            // hangs (NVIDIA tessellation pipeline crashes when the TES `in_attrs[]`
+            // size exceeds the upstream HS output control point count).
+            info.hs_es_vs_info.num_output_control_points =
+                regs.ls_hs_config.hs_output_control_points;
         }
         break;
     }
@@ -146,6 +151,9 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(Stage stage, LogicalS
             info.es_vs_info.tess_type = regs.tess_config.type;
             info.es_vs_info.tess_topology = regs.tess_config.topology;
             info.es_vs_info.tess_partitioning = regs.tess_config.partitioning;
+            // Match HS OutputVertices (see Stage::Export comment).
+            info.hs_es_vs_info.num_output_control_points =
+                regs.ls_hs_config.hs_output_control_points;
         }
         break;
     }

@@ -21,6 +21,11 @@ vk::StencilOp StencilOp(AmdGpu::StencilFunc op) {
         return vk::StencilOp::eKeep;
     case AmdGpu::StencilFunc::Zero:
         return vk::StencilOp::eZero;
+    case AmdGpu::StencilFunc::Ones:
+        // AMD `Ones` writes 0xFF unconditionally. Vulkan core has no equivalent;
+        // emulate with eReplace and have the caller pin the stencil reference to 0xFF
+        // for any face using this op (see UpdateDepthStencilState).
+        return vk::StencilOp::eReplace;
     case AmdGpu::StencilFunc::ReplaceTest:
         return vk::StencilOp::eReplace;
     case AmdGpu::StencilFunc::AddClamp:
@@ -36,7 +41,8 @@ vk::StencilOp StencilOp(AmdGpu::StencilFunc op) {
     case AmdGpu::StencilFunc::ReplaceOp:
         return vk::StencilOp::eReplace;
     default:
-        UNREACHABLE();
+        LOG_WARNING(Render_Vulkan, "Unsupported stencil op {}, falling back to Keep",
+                    static_cast<u32>(op));
         return vk::StencilOp::eKeep;
     }
 }

@@ -23,6 +23,12 @@ static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance* instance,
     if (!info.props.is_block) {
         if (info.props.is_depth) {
             usage |= vk::ImageUsageFlagBits::eDepthStencilAttachment;
+            // Some PS4 titles (e.g. GT Sport) sample the depth-stencil buffer in the same draw
+            // that uses it as the depth attachment. Permitting feedback-loop layout transitions
+            // requires the matching usage bit.
+            if (instance->IsAttachmentFeedbackLoopLayoutSupported()) {
+                usage |= vk::ImageUsageFlagBits::eAttachmentFeedbackLoopEXT;
+            }
         } else {
             usage |= vk::ImageUsageFlagBits::eColorAttachment;
             if (instance->IsAttachmentFeedbackLoopLayoutSupported()) {

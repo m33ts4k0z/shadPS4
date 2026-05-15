@@ -222,6 +222,9 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
 
+    if (instance.IsDeviceDiagnosticCheckpointsSupported()) {
+        cmdbuf.setCheckpointNV(reinterpret_cast<const void*>(pipeline->GetPipelineHash()));
+    }
     if (is_indexed) {
         cmdbuf.drawIndexed(regs.num_indices, regs.num_instances.NumInstances(), 0,
                            s32(vertex_offset), instance_offset);
@@ -278,6 +281,9 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->Handle());
 
+    if (instance.IsDeviceDiagnosticCheckpointsSupported()) {
+        cmdbuf.setCheckpointNV(reinterpret_cast<const void*>(pipeline->GetPipelineHash()));
+    }
     if (is_indexed) {
         ASSERT(sizeof(VkDrawIndexedIndirectCommand) == stride);
 
@@ -743,17 +749,19 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
             auto& image_view = texture_cache.FindTexture(image_id, desc);
 
             // The image is either bound as storage in a separate descriptor or bound as render
-            // target in feedback loop. Depth images are excluded because they can't be bound as
-            // storage and feedback loop doesn't make sense for them
-            if ((image.binding.force_general || image.binding.is_target) &&
-                !image.info.props.is_depth) {
-                image.Transit(instance.IsAttachmentFeedbackLoopLayoutSupported() &&
-                                      image.binding.is_target
-                                  ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
-                                  : vk::ImageLayout::eGeneral,
+            // target in feedback loop. Depth images participate too: GT Sport (and other PS4
+            // titles) sample the depth-stencil buffer while still using it as the depth/stencil
+            // attachment. Without feedback-loop layout this triggers
+            // VUID-vkCmdDrawIndexed-imageLayout-00344 and a NVIDIA driver device-lost.
+            if (image.binding.force_general || image.binding.is_target) {
+                const bool fbl_ok = instance.IsAttachmentFeedbackLoopLayoutSupported() &&
+                                    image.binding.is_target;
+                image.Transit(fbl_ok ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
+                                     : vk::ImageLayout::eGeneral,
                               vk::AccessFlagBits2::eShaderRead |
                                   (image.info.props.is_depth
-                                       ? vk::AccessFlagBits2::eDepthStencilAttachmentWrite
+                                       ? vk::AccessFlagBits2::eDepthStencilAttachmentWrite |
+                                             vk::AccessFlagBits2::eDepthStencilAttachmentRead
                                        : vk::AccessFlagBits2::eColorAttachmentWrite |
                                              vk::AccessFlagBits2::eColorAttachmentRead),
                               {});
@@ -898,17 +906,27 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         // Stencil writes can be enabled while depth writes are off.
         const bool stencil_write =
             has_stencil && regs.depth_control.stencil_enable && !desc.view_info.is_storage;
-        const auto new_layout = desc.view_info.is_storage
-                                    ? has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                                                  : vk::ImageLayout::eDepthAttachmentOptimal
-                                : stencil_write
-                                    ? vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
-                                : has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                              : vk::ImageLayout::eDepthReadOnlyOptimal;
+        // If the depth/stencil image was already bound as a sampled descriptor by this draw's
+        // resource binding pass, this is a feedback loop. Use the feedback-loop layout so the
+        // descriptor and attachment views agree on the image layout for the entire draw.
+        const bool use_feedback_loop =
+            image.binding.is_bound && instance.IsAttachmentFeedbackLoopLayoutSupported();
+        const auto new_layout =
+            use_feedback_loop
+                ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
+            : desc.view_info.is_storage
+                ? has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                              : vk::ImageLayout::eDepthAttachmentOptimal
+            : stencil_write ? vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
+            : has_stencil   ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+                            : vk::ImageLayout::eDepthReadOnlyOptimal;
         image.Transit(new_layout,
                       vk::AccessFlagBits2::eDepthStencilAttachmentWrite |
                           vk::AccessFlagBits2::eDepthStencilAttachmentRead,
                       desc.view_info.range);
+        if (use_feedback_loop) {
+            attachment_feedback_loop = true;
+        }
 
         state.width = std::min<u32>(state.width, image.info.size.width);
         state.height = std::min<u32>(state.height, image.info.size.height);
@@ -1277,7 +1295,21 @@ void Rasterizer::UpdateDepthStencilState() const {
         const auto front = regs.stencil_ref_front;
         const auto back =
             regs.depth_control.backface_enable ? regs.stencil_ref_back : regs.stencil_ref_front;
-        dynamic_state.SetStencilReferences(front.stencil_test_val, back.stencil_test_val);
+        // AMD's `Ones` op writes 0xFF unconditionally; we map it to Vulkan eReplace,
+        // so the stencil reference for any face using Ones must be pinned to 0xFF.
+        const auto uses_ones = [](AmdGpu::StencilFunc op) {
+            return op == AmdGpu::StencilFunc::Ones;
+        };
+        const bool front_ones = uses_ones(regs.stencil_control.stencil_fail_front) ||
+                                uses_ones(regs.stencil_control.stencil_zpass_front) ||
+                                uses_ones(regs.stencil_control.stencil_zfail_front);
+        const bool back_ones = regs.depth_control.backface_enable
+                                   ? (uses_ones(regs.stencil_control.stencil_fail_back) ||
+                                      uses_ones(regs.stencil_control.stencil_zpass_back) ||
+                                      uses_ones(regs.stencil_control.stencil_zfail_back))
+                                   : front_ones;
+        dynamic_state.SetStencilReferences(front_ones ? 0xFFu : front.stencil_test_val,
+                                           back_ones ? 0xFFu : back.stencil_test_val);
         dynamic_state.SetStencilWriteMasks(!stencil_clear ? front.stencil_write_mask : 0U,
                                            !stencil_clear ? back.stencil_write_mask : 0U);
         dynamic_state.SetStencilCompareMasks(front.stencil_mask, back.stencil_mask);

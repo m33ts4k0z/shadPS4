@@ -42,6 +42,10 @@ constexpr Stage StageFromIndex(size_t index) noexcept {
 
 struct CommonHsEsVsRuntimeInfo {
     u32 hs_output_cp_stride;
+    // Number of HS output control points (= patch_array size in TES inputs). The TES needs this
+    // at compile time to declare its input array with the matching size; declaring it larger
+    // than the HS actually produces is undefined behaviour and can crash NVIDIA's compiler.
+    u32 num_output_control_points;
 
     bool operator<=>(const CommonHsEsVsRuntimeInfo&) const noexcept = default;
 };

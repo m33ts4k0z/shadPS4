@@ -492,9 +492,11 @@ void EmitContext::DefineInputs() {
         const u32 num_attrs = Common::AlignUp(runtime_info.hs_info.ls_stride, 16) >> 4;
         if (num_attrs > 0) {
             const Id per_vertex_type{TypeArray(F32[4], ConstU32(num_attrs))};
-            // The input vertex count isn't statically known, so make length 32 (what
-            // glslang does)
-            const Id patch_array_type{TypeArray(per_vertex_type, ConstU32(32u))};
+            // Match the upstream LS's output vertex count (= HS input control points). Declaring
+            // a larger array than the LS actually produces is undefined behavior and can cause
+            // NVIDIA's tessellation compiler to hang on the first draw.
+            const u32 input_cp = std::max<u32>(runtime_info.hs_info.num_input_control_points, 1u);
+            const Id patch_array_type{TypeArray(per_vertex_type, ConstU32(input_cp))};
             input_attr_array = DefineInput(patch_array_type, 0);
             Name(input_attr_array, "in_attrs");
         }
@@ -508,9 +510,12 @@ void EmitContext::DefineInputs() {
             Common::AlignUp(runtime_info.hs_es_vs_info.hs_output_cp_stride, 16) >> 4;
         if (num_attrs > 0) {
             const Id per_vertex_type{TypeArray(F32[4], ConstU32(num_attrs))};
-            // The input vertex count isn't statically known, so make length 32 (what
-            // glslang does)
-            const Id patch_array_type{TypeArray(per_vertex_type, ConstU32(32u))};
+            // Must match HS OutputVertices. Without this, NVIDIA may hang on the first draw of
+            // the tessellation pipeline (was previously hardcoded to 32 -- glslang allows that
+            // but Vulkan/NVIDIA require the array length to match the upstream HS output count).
+            const u32 hs_out_cp =
+                std::max<u32>(runtime_info.hs_es_vs_info.num_output_control_points, 1u);
+            const Id patch_array_type{TypeArray(per_vertex_type, ConstU32(hs_out_cp))};
             input_attr_array = DefineInput(patch_array_type, 0);
             Name(input_attr_array, "in_attrs");
         }

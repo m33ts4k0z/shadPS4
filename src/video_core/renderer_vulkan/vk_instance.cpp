@@ -245,6 +245,12 @@ bool Instance::CreateDevice() {
 
     // Optional
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+    nv_diagnostic_checkpoints =
+        add_extension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+    // VK_EXT_device_fault was tried but triggers a NULL-pointer crash inside nvoglv64.dll
+    // during driver init. Leaving the field/getter in place in case we revisit (or another
+    // driver supports it cleanly), but the extension is NOT enabled here.
+    ext_device_fault = false;
     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
     if (attachment_feedback_loop) {
         attachment_feedback_loop =

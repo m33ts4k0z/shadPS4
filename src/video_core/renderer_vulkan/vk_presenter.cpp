@@ -1122,8 +1122,35 @@ Frame* Presenter::GetRenderFrame() {
 
     // Wait for the presentation to be finished so all frame resources are free
     while (wait() != vk::Result::eSuccess) {
-        ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
-                   "Device lost during waiting for a frame");
+        if (result == vk::Result::eErrorDeviceLost) {
+            // Dump VK_NV_device_diagnostic_checkpoints data so we know which draw faulted.
+            // Each `setCheckpointNV` marker is the pipeline hash from
+            // `GraphicsPipeline::GetPipelineHash()`. Cross-reference against
+            // "Compiling graphics pipeline 0x...." log lines to identify which pipeline was
+            // executing at the moment the GPU went down.
+            static bool dumped = false;
+            if (!dumped) {
+                dumped = true;
+                if (instance.IsDeviceDiagnosticCheckpointsSupported()) {
+                    const auto checkpoints =
+                        instance.GetGraphicsQueue().getCheckpointDataNV();
+                    LOG_CRITICAL(Render_Vulkan,
+                                 "Device lost — VK_NV_device_diagnostic_checkpoints reported {} "
+                                 "checkpoint(s); last-completed markers (pipeline hashes) follow:",
+                                 checkpoints.size());
+                    for (const auto& cp : checkpoints) {
+                        LOG_CRITICAL(Render_Vulkan, "  stage={} pipeline_hash=0x{:016x}",
+                                     vk::to_string(cp.stage),
+                                     reinterpret_cast<u64>(cp.pCheckpointMarker));
+                    }
+                }
+                // (VK_EXT_device_fault wiring removed: enabling the feature on this NVIDIA
+                // driver causes a NULL-pointer write inside nvoglv64.dll during background
+                // init — likely a driver bug. NV_device_diagnostic_checkpoints alone is enough
+                // to identify the faulting pipeline.)
+            }
+            ASSERT_MSG(false, "Device lost during waiting for a frame");
+        }
         // Retry if the waiting times out
         if (result == vk::Result::eTimeout) {
             continue;

@@ -549,6 +549,15 @@ void SetupRoundingMode(EmitContext& ctx, const Profile& profile, const RuntimeIn
 
 void SetupInfNanPreserveMode(EmitContext& ctx, const Profile& profile,
                              const RuntimeInfo& runtime_info, Id main_func) {
+    // Skip SignedZeroInfNanPreserve on tessellation stages. NVIDIA's tessellation hardware
+    // hangs when tess factors come out as NaN/Inf (e.g. from `InverseSqrt(0)` in a degenerate
+    // patch), and preserving those values lets the bad factors reach the tessellator. Flushing
+    // them lets the driver substitute well-defined zero / sentinel values so the patch is
+    // simply culled instead of crashing the GPU.
+    if (ctx.info.l_stage == LogicalStage::TessellationControl ||
+        ctx.info.l_stage == LogicalStage::TessellationEval) {
+        return;
+    }
     ctx.AddCapability(spv::Capability::SignedZeroInfNanPreserve);
     // universally supported (98.85% on gpuinfo) so no flag checked
     ctx.AddExecutionMode(main_func, spv::ExecutionMode::SignedZeroInfNanPreserve, 32U);
