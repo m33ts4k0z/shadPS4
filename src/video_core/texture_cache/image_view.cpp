@@ -67,6 +67,25 @@ ImageViewInfo::ImageViewInfo(const AmdGpu::Image& image, const Shader::ImageReso
 
     if (!is_storage) {
         mapping = Vulkan::LiverpoolToVK::ComponentMapping(image.DstSelect());
+        // PS4 single-channel formats use the texel as either R or A depending on dst_sel.
+        // Vulkan single-channel formats expose the texel only via R; reading G/B/A returns
+        // the standard defaults (0/0/1). Remap any reference to a non-R channel back to R
+        // when the underlying format only has an R component so the game's swizzle works.
+        const bool is_single_channel =
+            (dfmt == AmdGpu::DataFormat::Format8 || dfmt == AmdGpu::DataFormat::Format16 ||
+             dfmt == AmdGpu::DataFormat::Format32);
+        if (is_single_channel) {
+            auto fixup = [](vk::ComponentSwizzle& c) {
+                if (c == vk::ComponentSwizzle::eG || c == vk::ComponentSwizzle::eB ||
+                    c == vk::ComponentSwizzle::eA) {
+                    c = vk::ComponentSwizzle::eR;
+                }
+            };
+            fixup(mapping.r);
+            fixup(mapping.g);
+            fixup(mapping.b);
+            fixup(mapping.a);
+        }
     }
 }
 
