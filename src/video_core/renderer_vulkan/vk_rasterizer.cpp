@@ -911,13 +911,20 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         // descriptor and attachment views agree on the image layout for the entire draw.
         const bool use_feedback_loop =
             image.binding.is_bound && instance.IsAttachmentFeedbackLoopLayoutSupported();
+        // Use the fully-writable depth-stencil layout whenever stencil writes are enabled.
+        // The "depth read-only + stencil attachment" layout is spec-legal but has triggered
+        // NVIDIA tessellation pipeline hangs in GT Sport's gift-car selection pass when the
+        // game uses a depth-attachment as read-only while writing stencil through a tess
+        // pipeline. Falling back to DepthStencilAttachmentOptimal costs nothing functionally
+        // (depth writes remain disabled by the depth-write-enable dynamic state) and avoids
+        // driver-specific quirks of the mixed read-only/write layout.
         const auto new_layout =
             use_feedback_loop
                 ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
             : desc.view_info.is_storage
                 ? has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
                               : vk::ImageLayout::eDepthAttachmentOptimal
-            : stencil_write ? vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
+            : stencil_write ? vk::ImageLayout::eDepthStencilAttachmentOptimal
             : has_stencil   ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
                             : vk::ImageLayout::eDepthReadOnlyOptimal;
         image.Transit(new_layout,

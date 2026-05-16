@@ -773,6 +773,18 @@ EmitContext::BufferSpv EmitContext::DefineBuffer(bool is_storage, bool is_writte
     if (is_storage && !is_written) {
         Decorate(id, spv::Decoration::NonWritable);
     }
+    // shadps4 commonly defines several SSBO variables at the same Binding (one per scalar
+    // width: u8 / u16 / u32 / u32x4) so the shader can address the same descriptor at
+    // different granularities. Per SPIR-V, multiple variables sharing a storage buffer
+    // binding need OpDecorate Aliased; without it the SPIR-V optimizer may assume Restrict
+    // (no aliasing) and reorder / drop loads across the variables. NVIDIA accepts the
+    // unmarked form but can hang or produce wrong values on shader stages that read the
+    // same descriptor through multiple width-views (notably the tessellation control
+    // shader's per-patch SSBO reads). Mark every storage buffer variable Aliased to be
+    // explicit.
+    if (is_storage) {
+        Decorate(id, spv::Decoration::Aliased);
+    }
     switch (buffer_type) {
     case BufferType::GdsBuffer:
         Name(id, "gds_buffer");

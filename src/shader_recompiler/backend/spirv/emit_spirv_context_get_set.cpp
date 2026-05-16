@@ -255,9 +255,18 @@ void EmitSetAttribute(EmitContext& ctx, IR::Attribute attr, Id value, u32 elemen
 }
 
 Id EmitGetTessGenericAttribute(EmitContext& ctx, Id vertex_index, Id attr_index, Id comp_index) {
+    // Clamp dynamic vertex_index to [0, num_input_control_points - 1]. The PS4 hull shader
+    // computes this index from buffer data, and a runaway / corrupt value can cause an OOB
+    // read of in_attrs[] that crashes NVIDIA's tessellation pipeline before robustness2
+    // clamping has a chance to apply (the access is via Input storage class, not a storage
+    // buffer). Static patches of 4 cps cover all GT Sport's tess pipelines today.
+    const u32 input_cp =
+        std::max<u32>(ctx.runtime_info.hs_info.num_input_control_points, 1u);
+    const Id max_index = ctx.ConstU32(input_cp - 1);
+    const Id clamped_index = ctx.OpUMin(ctx.U32[1], vertex_index, max_index);
     const auto attr_comp_ptr = ctx.TypePointer(spv::StorageClass::Input, ctx.F32[1]);
     return ctx.OpLoad(ctx.F32[1], ctx.OpAccessChain(attr_comp_ptr, ctx.input_attr_array,
-                                                    vertex_index, attr_index, comp_index));
+                                                    clamped_index, attr_index, comp_index));
 }
 
 Id EmitReadTcsGenericOuputAttribute(EmitContext& ctx, Id vertex_index, Id attr_index,
@@ -286,6 +295,13 @@ Id EmitGetPatch(EmitContext& ctx, IR::Patch patch) {
 }
 
 void EmitSetPatch(EmitContext& ctx, IR::Patch patch, Id value) {
+    const bool is_tess_level = !IR::IsGeneric(patch) &&
+                               (patch == IR::Patch::TessellationLodLeft ||
+                                patch == IR::Patch::TessellationLodRight ||
+                                patch == IR::Patch::TessellationLodTop ||
+                                patch == IR::Patch::TessellationLodBottom ||
+                                patch == IR::Patch::TessellationLodInteriorU ||
+                                patch == IR::Patch::TessellationLodInteriorV);
     const Id pointer{[&] {
         if (IR::IsGeneric(patch)) {
             const u32 index{IR::GenericPatchIndex(patch)};
@@ -310,6 +326,15 @@ void EmitSetPatch(EmitContext& ctx, IR::Patch patch, Id value) {
             UNREACHABLE_MSG("Patch {}", u32(patch));
         }
     }()};
+    if (is_tess_level) {
+        // NaN/Inf tess factors hang the fixed-function tessellator on NVIDIA (degenerate
+        // patches produce RecipSqrt(0)=Inf and similar). Clamp to a well-defined range via
+        // NaN-aware min/max so a bad value collapses to 1.0 (degenerate patch culled by HW)
+        // instead of crashing the GPU. Vulkan guarantees maxTessellationGenerationLevel >= 64.
+        const Id one = ctx.ConstF32(1.0f);
+        const Id max_level = ctx.ConstF32(64.0f);
+        value = ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], value, one), max_level);
+    }
     ctx.OpStore(pointer, value);
 }
 
